@@ -62,6 +62,9 @@ internal sealed class ModernButton : Control
         }
     }
 
+    [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+    public Color? LeadingGlyphColor { get; set; }
+
     private void AutoFitWidth()
     {
         var textWidth = UiTheme.MeasureWidth(Text, Font);
@@ -184,8 +187,9 @@ internal sealed class ModernButton : Control
 
         if (!string.IsNullOrEmpty(LeadingGlyph))
         {
+            var glyphColor = enabled ? LeadingGlyphColor ?? textColor : UiTheme.TextMuted;
             var glyphRect = new Rectangle(startX, rect.Y, UiTheme.Scale(this, 16), rect.Height);
-            UiTheme.DrawText(g, LeadingGlyph, UiTheme.SmallBoldFont, glyphRect, textColor);
+            UiTheme.DrawText(g, LeadingGlyph, UiTheme.SmallBoldFont, glyphRect, glyphColor);
             textRect = new Rectangle(
                 startX + UiTheme.Scale(this, 18),
                 rect.Y,
@@ -232,12 +236,14 @@ internal sealed class ModernButton : Control
 }
 
 /// <summary>
-/// 无边框窗口的最小化/最大化/还原/关闭按钮。用线条绘制，避免"红黄绿圆点"被误读为状态灯。
+/// 无边框窗口的设置/最小化/最大化/关闭按钮。
+/// 悬停时出现圆角底片，关闭键用红色强调，图标用统一线宽绘制。
 /// </summary>
 [DesignerCategory("Code")]
 internal sealed class WindowChromeButton : Control
 {
     private bool _hovered;
+    private bool _pressed;
 
     public WindowChromeButton(WindowControlKind kind)
     {
@@ -249,10 +255,10 @@ internal sealed class WindowChromeButton : Control
             true);
 
         Kind = kind;
-        Width = 40;
+        Width = 42;
         Height = 30;
         Cursor = Cursors.Hand;
-        BackColor = Color.FromArgb(15, 18, 24);
+        BackColor = UiTheme.TitleBarBg;
     }
 
     public enum WindowControlKind
@@ -280,7 +286,28 @@ internal sealed class WindowChromeButton : Control
     {
         base.OnMouseLeave(e);
         _hovered = false;
+        _pressed = false;
         Invalidate();
+    }
+
+    protected override void OnMouseDown(MouseEventArgs e)
+    {
+        base.OnMouseDown(e);
+        if (e.Button == MouseButtons.Left)
+        {
+            _pressed = true;
+            Invalidate();
+        }
+    }
+
+    protected override void OnMouseUp(MouseEventArgs e)
+    {
+        base.OnMouseUp(e);
+        if (e.Button == MouseButtons.Left)
+        {
+            _pressed = false;
+            Invalidate();
+        }
     }
 
     protected override void OnPaint(PaintEventArgs e)
@@ -288,20 +315,40 @@ internal sealed class WindowChromeButton : Control
         var g = e.Graphics;
         g.SmoothingMode = SmoothingMode.AntiAlias;
 
+        var hoverFill = Kind switch
+        {
+            WindowControlKind.Close => _pressed ? Color.FromArgb(178, 52, 52) : Color.FromArgb(202, 64, 64),
+            WindowControlKind.Settings => _pressed ? Color.FromArgb(38, 54, 86) : UiTheme.AccentSoft,
+            _ => _pressed ? Color.FromArgb(34, 40, 52) : UiTheme.RowHoverBg
+        };
+
         if (_hovered)
         {
-            var bg = Kind == WindowControlKind.Close
-                ? Color.FromArgb(196, 62, 62)
-                : Color.FromArgb(38, 44, 57);
-            using var brush = new SolidBrush(bg);
-            g.FillRectangle(brush, ClientRectangle);
+            UiTheme.FillRounded(g,
+                new Rectangle(UiTheme.Scale(this, 3), UiTheme.Scale(this, 4),
+                    Width - UiTheme.Scale(this, 6), Height - UiTheme.Scale(this, 8)),
+                UiTheme.Scale(this, 6), hoverFill);
         }
 
-        var color = _hovered && Kind == WindowControlKind.Close ? Color.White : UiTheme.TextSecondary;
-        using var pen = new Pen(color, 1.2f);
+        var backdrop = _hovered ? hoverFill : BackColor;
+
+        var color = Kind switch
+        {
+            WindowControlKind.Close when _hovered => Color.White,
+            WindowControlKind.Settings when _hovered => UiTheme.AccentHover,
+            _ when _hovered => UiTheme.TextPrimary,
+            _ => UiTheme.TextSecondary
+        };
+
+        using var pen = new Pen(color, 1.3f)
+        {
+            StartCap = LineCap.Round,
+            EndCap = LineCap.Round,
+            LineJoin = LineJoin.Round
+        };
 
         var cx = Width / 2f;
-        var cy = Height / 2f;
+        var cy = Height / 2f + (_pressed ? 1 : 0);
         var half = UiTheme.Scale(this, 5);
 
         switch (Kind)
@@ -311,38 +358,56 @@ internal sealed class WindowChromeButton : Control
                 break;
 
             case WindowControlKind.Maximize when !IsMaximized:
-                g.DrawRectangle(pen, cx - half, cy - half, half * 2, half * 2);
+                using (var path = UiTheme.RoundedRect(
+                           new Rectangle((int)(cx - half), (int)(cy - half), half * 2, half * 2),
+                           UiTheme.Scale(this, 2)))
+                {
+                    g.DrawPath(pen, path);
+                }
                 break;
 
             case WindowControlKind.Maximize:
-                g.DrawRectangle(pen, cx - half, cy - half, half * 2, half * 2);
-                using (var inner = new Pen(color, 1f))
-                    g.DrawLine(inner, cx - half + 2, cy - half + 2, cx + half, cy - half + 2);
+                using (var back = UiTheme.RoundedRect(
+                           new Rectangle((int)(cx - half + 2), (int)(cy - half), half * 2 - 2, half * 2 - 2),
+                           UiTheme.Scale(this, 2)))
+                {
+                    g.DrawPath(pen, back);
+                }
+                using (var front = UiTheme.RoundedRect(
+                           new Rectangle((int)(cx - half), (int)(cy - half + 2), half * 2 - 2, half * 2 - 2),
+                           UiTheme.Scale(this, 2)))
+                using (var brush = new SolidBrush(backdrop))
+                {
+                    g.FillPath(brush, front);
+                    g.DrawPath(pen, front);
+                }
                 break;
 
             case WindowControlKind.Close:
-                g.DrawLine(pen, cx - half, cy - half, cx + half, cy + half);
-                g.DrawLine(pen, cx + half, cy - half, cx - half, cy + half);
+                var inset = UiTheme.Scale(this, 1);
+                g.DrawLine(pen, cx - half, cy - half + inset, cx + half, cy + half + inset);
+                g.DrawLine(pen, cx + half, cy - half + inset, cx - half, cy + half + inset);
                 break;
 
             case WindowControlKind.Settings:
-                // 齿轮：中心圆 + 8 齿辐条 + 内孔
-                g.DrawEllipse(pen, cx - half, cy - half, half * 2, half * 2);
-                for (var i = 0; i < 8; i++)
+                // 滑杆图标：三条轨道 + 错位旋钮，比齿轮更贴合"设置"语义
+                var trackLeft = cx - UiTheme.Scale(this, 7);
+                var trackRight = cx + UiTheme.Scale(this, 7);
+                var knob = UiTheme.Scale(this, 2);
+                for (var i = 0; i < 3; i++)
                 {
-                    var angle = i * Math.PI / 4;
-                    var inner = half + UiTheme.Scale(this, 1);
-                    var outer = half + UiTheme.Scale(this, 4);
-                    g.DrawLine(pen,
-                        cx + (float)Math.Cos(angle) * inner,
-                        cy + (float)Math.Sin(angle) * inner,
-                        cx + (float)Math.Cos(angle) * outer,
-                        cy + (float)Math.Sin(angle) * outer);
-                }
-                using (var holePen = new Pen(color, 1f))
-                {
-                    var holeR = UiTheme.Scale(this, 2);
-                    g.DrawEllipse(holePen, cx - holeR, cy - holeR, holeR * 2, holeR * 2);
+                    var y = cy + (i - 1) * UiTheme.Scale(this, 4);
+                    g.DrawLine(pen, trackLeft, y, trackRight, y);
+
+                    var knobX = i switch
+                    {
+                        0 => trackLeft + UiTheme.Scale(this, 4),
+                        1 => trackRight - UiTheme.Scale(this, 4),
+                        _ => cx + UiTheme.Scale(this, 2)
+                    };
+                    using var knobBrush = new SolidBrush(backdrop);
+                    g.FillEllipse(knobBrush, knobX - knob, y - knob, knob * 2, knob * 2);
+                    g.DrawEllipse(pen, knobX - knob, y - knob, knob * 2, knob * 2);
                 }
                 break;
         }

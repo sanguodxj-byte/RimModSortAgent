@@ -48,8 +48,20 @@ internal static class UiTheme
     public static readonly Color ScrollThumb = Color.FromArgb(62, 72, 90);
     public static readonly Color ScrollThumbHover = Color.FromArgb(86, 99, 122);
 
+    // 设置窗口专用层级：导航栏比正文更沉，输入框比卡片更亮
+    public static readonly Color NavBg = Color.FromArgb(15, 18, 25);
+    public static readonly Color NavHoverBg = Color.FromArgb(23, 28, 38);
+    public static readonly Color NavActiveBg = Color.FromArgb(26, 36, 53);
+    public static readonly Color InputBg = Color.FromArgb(20, 24, 32);
+    public static readonly Color InputHoverBorder = Color.FromArgb(66, 77, 99);
+    public static readonly Color TitleBarBg = Color.FromArgb(15, 18, 24);
+
     // 字体：全静态复用，避免在 OnPaint 里反复 new Font 造成 GDI 句柄泄漏
     public static readonly Font TitleFont = new("Microsoft YaHei UI", 10.5f, FontStyle.Bold);
+    public static readonly Font DialogTitleFont = new("Microsoft YaHei UI", 13.5f, FontStyle.Bold);
+    public static readonly Font PageTitleFont = new("Microsoft YaHei UI", 14.5f, FontStyle.Bold);
+    public static readonly Font NavTitleFont = new("Microsoft YaHei UI", 9.4f, FontStyle.Bold);
+    public static readonly Font NavSubFont = new("Microsoft YaHei UI", 8.0f, FontStyle.Regular);
     public static readonly Font SubtitleFont = new("Microsoft YaHei UI", 8.6f, FontStyle.Regular);
     public static readonly Font SectionFont = new("Microsoft YaHei UI", 9.6f, FontStyle.Bold);
     public static readonly Font BodyFont = new("Microsoft YaHei UI", 9.0f, FontStyle.Regular);
