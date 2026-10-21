@@ -18,18 +18,43 @@ public sealed class AgentInvestigator : IDisposable
         PropertyNameCaseInsensitive = true
     };
 
+    private const string AgentToolsPrompt = """
+
+## 可用工具（文件 + 反编译）
+运行时已提供 read_file / list_files / write_file，以及 list_assemblies / find_members / decompile_method / decompile_type。
+上面的证据是完整原文，优先直接使用；但写任何 Harmony 补丁代码前，必须用反编译工具查询真实程序集核对签名，禁止凭记忆猜测 API。
+- 原版程序集：assembly="game"
+- 模组程序集：assembly=packageId 或 DLL 文件名；不确定就先用 list_assemblies 搜索
+- 目标方法、补丁要调用的每个外部方法/字段/属性，都必须用 find_members 或 decompile_method 核实；有重载时用 parameter_count 或 member_id
+- 不调用反编译工具就给出的 harmony 方案会被宿主拒绝编译
+文件路径必须位于游戏目录或已发现的模组目录内；write_file 只能写入本案例工作区，不会修改游戏或模组目录。
+一旦证据足够，立即输出最终 JSON 结论，不要为了反复确认而继续读取。
+""";
+
     private readonly AgentConfig _config;
     private readonly AgentCaseBuilder _caseBuilder;
     private readonly AgentClient? _client;
+    private readonly IReadOnlyList<ModDescriptor> _mods;
+    private readonly string _gameDir;
+    private readonly AgentDecompilerTools _decompilerTools;
+    private readonly Action<string>? _trace;
     private readonly ConcurrentDictionary<string, AgentReport> _cache = new(StringComparer.OrdinalIgnoreCase);
 
     // 反编译上下文与缓存不是线程安全的：取证阶段串行化，模型调用仍可并行。
     private readonly SemaphoreSlim _caseGate = new(1, 1);
 
-    public AgentInvestigator(AgentConfig config, IReadOnlyList<ModDescriptor> mods, string gameDir)
+    public AgentInvestigator(
+        AgentConfig config,
+        IReadOnlyList<ModDescriptor> mods,
+        string gameDir,
+        Action<string>? trace = null)
     {
         _config = config;
         _caseBuilder = new AgentCaseBuilder(mods, gameDir);
+        _mods = mods;
+        _gameDir = gameDir;
+        _trace = trace;
+        _decompilerTools = new AgentDecompilerTools(mods, gameDir, trace);
 
         if (config.IsConfigured)
             _client = new AgentClient(config);
@@ -114,13 +139,164 @@ public sealed class AgentInvestigator : IDisposable
         AgentCaseFile caseFile,
         CancellationToken cancellationToken)
     {
-        var raw = await _client!.CompleteAsync(caseFile.PromptText, cancellationToken).ConfigureAwait(false);
+        var workspace = Path.Combine(
+            AgentConfigLoader.DefaultCaseOutputDir,
+            AgentFileTools.SafeWorkspaceName(conflict.Key));
+        var fileTools = new AgentFileTools(
+            _mods.Select(m => m.RootDirectory).Append(_gameDir),
+            workspace);
+        var prompt = caseFile.PromptText + AgentToolsPrompt + AssemblyHints(conflict);
+        _decompilerTools.BeginConversation();
+        var decompileCallsBefore = _decompilerTools.EvidenceCalls;
+
+        string raw;
+        try
+        {
+            raw = await _client!.CompleteWithToolsAsync(
+                prompt,
+                BuildToolDefinitions(fileTools),
+                BuildToolExecutor(fileTools),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (AgentToolsUnsupportedException)
+        {
+            _trace?.Invoke("investigate: 端点不支持工具调用，Harmony 方案将被拒绝");
+            raw = await _client!.CompleteAsync(prompt, cancellationToken).ConfigureAwait(false);
+        }
+
         var json = AgentClient.ExtractJsonObject(raw)
                    ?? throw new InvalidOperationException("模型没有返回可解析的 JSON 对象。");
 
         var payload = JsonSerializer.Deserialize<LlmPayload>(json, PayloadOptions)
                       ?? throw new InvalidOperationException("模型返回的 JSON 为空。");
 
+        var report = BuildModelReport(conflict, caseFile, raw, payload);
+        return EnforceDecompilerEvidence(
+            report,
+            _decompilerTools.EvidenceCalls > decompileCallsBefore);
+    }
+
+    private IReadOnlyList<AgentToolDefinition> BuildToolDefinitions(AgentFileTools fileTools)
+        => fileTools.Definitions.Concat(_decompilerTools.Definitions).ToList();
+
+    private string AssemblyHints(PlayerConflict conflict)
+        => _decompilerTools.DescribeAssembliesFor(new[] { conflict.ModAPackageId, conflict.ModBPackageId });
+
+    private Func<AgentToolCall, CancellationToken, Task<string>> BuildToolExecutor(AgentFileTools fileTools)
+        => async (call, cancellationToken) =>
+        {
+            _trace?.Invoke($"tool {call.Name} {Shorten(call.ArgumentsJson, 240)}");
+            return _decompilerTools.Handles(call.Name)
+                ? await _decompilerTools.ExecuteAsync(call, cancellationToken).ConfigureAwait(false)
+                : await fileTools.ExecuteAsync(call, cancellationToken).ConfigureAwait(false);
+        };
+
+    private static AgentReport EnforceDecompilerEvidence(AgentReport report, bool usedDecompiler)
+    {
+        if (usedDecompiler || report.PatchPlan is not { Kind: "harmony" } plan)
+            return report;
+
+        return report with
+        {
+            PatchPlan = plan with
+            {
+                Kind = "manual",
+                HarmonyCode = null,
+                Summary = (plan.Summary +
+                           "\n\n（未调用反编译工具核对真实程序集签名，宿主已拒绝自动编译该补丁。）").Trim()
+            }
+        };
+    }
+
+    private static string Shorten(string? value, int max)
+        => string.IsNullOrEmpty(value) || value.Length <= max ? value ?? string.Empty : value[..max] + "…";
+
+    /// <summary>
+    /// 把真实编译器的错误连同原补丁与完整证据回传给模型，要求只修编译问题并重新给出可编译代码。
+    /// 返回 null 表示模型未给出可用的新方案，调用方应保留原结论。
+    /// </summary>
+    public async Task<AgentReport?> RepairHarmonyPlanAsync(
+        PlayerConflict conflict,
+        AgentReport report,
+        string compilerOutput,
+        CancellationToken cancellationToken = default)
+    {
+        if (_client == null ||
+            report.PatchPlan is not { Kind: "harmony" } plan ||
+            string.IsNullOrWhiteSpace(plan.HarmonyCode) ||
+            string.IsNullOrWhiteSpace(compilerOutput))
+            return null;
+
+        AgentCaseFile caseFile;
+        await _caseGate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            caseFile = await Task.Run(() => _caseBuilder.Build(conflict, cancellationToken), cancellationToken)
+                .ConfigureAwait(false);
+        }
+        finally
+        {
+            _caseGate.Release();
+        }
+
+        var prompt = BuildRepairPrompt(caseFile, plan.HarmonyCode, compilerOutput) + AssemblyHints(conflict);
+        var workspace = Path.Combine(
+            AgentConfigLoader.DefaultCaseOutputDir,
+            AgentFileTools.SafeWorkspaceName(conflict.Key));
+        var fileTools = new AgentFileTools(
+            _mods.Select(m => m.RootDirectory).Append(_gameDir),
+            workspace);
+        _decompilerTools.BeginConversation();
+        var decompileCallsBefore = _decompilerTools.EvidenceCalls;
+
+        string raw;
+        try
+        {
+            raw = await _client.CompleteWithToolsAsync(
+                prompt,
+                BuildToolDefinitions(fileTools),
+                BuildToolExecutor(fileTools),
+                cancellationToken).ConfigureAwait(false);
+        }
+        catch (AgentToolsUnsupportedException)
+        {
+            _trace?.Invoke("repair: 端点不支持工具调用，拒绝未核对真实签名的修复");
+            return null;
+        }
+
+        if (_decompilerTools.EvidenceCalls <= decompileCallsBefore)
+        {
+            _trace?.Invoke("repair: 本次修复没有调用反编译工具，拒绝结果");
+            return null;
+        }
+
+        var json = AgentClient.ExtractJsonObject(raw);
+        if (json == null)
+            return null;
+
+        var payload = JsonSerializer.Deserialize<LlmPayload>(json, PayloadOptions);
+        if (payload == null)
+            return null;
+
+        var repaired = BuildModelReport(conflict, caseFile, raw, payload);
+        if (repaired.PatchPlan is not { Kind: "harmony" } repairedPlan ||
+            string.IsNullOrWhiteSpace(repairedPlan.HarmonyCode))
+            return null;
+
+        return repaired with
+        {
+            RawResponse = (report.RawResponse ?? string.Empty) +
+                          "\n\n===== 编译修复 =====\n" + raw,
+            Error = null
+        };
+    }
+
+    private AgentReport BuildModelReport(
+        PlayerConflict conflict,
+        AgentCaseFile caseFile,
+        string raw,
+        LlmPayload payload)
+    {
         var verdict = ParseVerdict(payload.Verdict);
         var confidence = payload.Confidence is >= 0 and <= 1 ? payload.Confidence : 0.5;
         var hiddenRisks = (payload.HiddenRisks ?? new List<LlmRisk>())
@@ -149,6 +325,38 @@ public sealed class AgentInvestigator : IDisposable
             EvidenceSummary: caseFile.Summary,
             RawResponse: raw,
             Error: null);
+    }
+
+    private static string BuildRepairPrompt(
+        AgentCaseFile caseFile,
+        string harmonyCode,
+        string compilerOutput)
+    {
+        var errors = compilerOutput.Trim();
+        if (errors.Length > 12000)
+            errors = errors[^12000..];
+
+        return caseFile.PromptText + $"""
+
+## 编译修复
+上一次给出的 Harmony 补丁在真实编译器中失败。请只修复编译错误，保持同一冲突结论与修复策略。
+编译器输出：
+```text
+{errors}
+```
+待修复代码：
+```csharp
+{harmonyCode}
+```
+要求：
+1. patch_plan.kind 仍为 harmony，harmony_code 必须是完整、可直接编译的 C# 代码；只输出最终的 JSON 对象。
+2. 编译工程只引用 Assembly-CSharp、0Harmony 和 Unity 兼容层，没有目标模组程序集；目标模组类型必须用反射访问，并处理类型或成员缺失。
+3. ThingWithComps 只有泛型 GetComp<T>()，不存在 GetComp(Type)。按动态 Type 取组件请用 thing.AllComps.FirstOrDefault(c => type.IsInstanceOfType(c))。
+4. 无法直接访问的私有成员用反射或 Harmony Traverse，不要引用不存在的 API。
+5. 不要声称代码被截断，不要输出 Markdown 围栏。
+6. CS1501 / CS1503 / CS1061 表示你调用的游戏 API 与当前 Assembly-CSharp 不符：不得凭记忆猜测重载或可选参数，必须改成证据中出现过的调用形式；不确定时用反射（AccessTools.Method + Invoke），并逐行复查所有游戏 API 调用。
+7. 修复前必须先调用 find_members / decompile_method 查询报错涉及的真实程序集与签名；本次修复没有反编译调用记录会被宿主直接拒绝。
+""";
     }
 
     private static AgentVerdictKind ParseVerdict(string? verdict) => verdict?.Trim().ToLowerInvariant() switch
@@ -229,7 +437,6 @@ public sealed class AgentInvestigator : IDisposable
             .Select(s => $"{s.Source} · {s.Member}")
             .Where(s => s.Length > 0)
             .Distinct(StringComparer.OrdinalIgnoreCase)
-            .Take(12)
             .ToList();
 
     // ── 本地确定性核查 ─────────────────────────────────────────────────────
@@ -258,6 +465,9 @@ public sealed class AgentInvestigator : IDisposable
             "ExplicitIncompatibility" => (AgentVerdictKind.RealConflict, 0.96),
             "MissingDependency" => (AgentVerdictKind.RealConflict, 0.96),
             "CyclicLoadOrderConstraint" => (AgentVerdictKind.RealConflict, 0.9),
+            // 游戏自己打印的红字，证据来自运行时而不是静态推断
+            "BrokenXmlDefReference" => (AgentVerdictKind.RealConflict, 0.95),
+            "XmlDefConfigError" => (AgentVerdictKind.RealConflict, 0.9),
             "ConditionalPrefixOrResultMutationOverlap" => (AgentVerdictKind.ConditionDependent, hasConditionalGuard ? 0.7 : 0.58),
             "MultipleTranspilersSameTarget" => (AgentVerdictKind.ConditionDependent, hasCodeMatcher ? 0.72 : 0.6),
             "ConditionalOrMixedXmlPatchOverlap" => (AgentVerdictKind.ConditionDependent, 0.58),
@@ -290,6 +500,8 @@ public sealed class AgentInvestigator : IDisposable
             "ExplicitIncompatibility" => "disable_one",
             "MissingDependency" => "manual",
             "CyclicLoadOrderConstraint" => "disable_one",
+            "BrokenXmlDefReference" => "manual",
+            "XmlDefConfigError" => "manual",
             _ => "manual"
         };
 
@@ -411,6 +623,24 @@ public sealed class AgentInvestigator : IDisposable
                     "medium"));
                 break;
 
+            case "BrokenXmlDefReference":
+                risks.Add(new AgentHiddenRisk(
+                    "引用被静默丢弃",
+                    "游戏解析不到这条引用时会打印红字并按空值继续，物品、音效或伤害数值会缺失，但不会崩溃，容易被忽略。",
+                    "high"));
+                risks.Add(new AgentHiddenRisk(
+                    "顺序调整无效",
+                    "跨引用在全部 Def 载入后才统一解析，调整加载顺序不会改变结果；必须改引用本身或补上定义它的模组。",
+                    "medium"));
+                break;
+
+            case "XmlDefConfigError":
+                risks.Add(new AgentHiddenRisk(
+                    "出错字段被忽略",
+                    "游戏只跳过配置有误的那部分数据，其余照常生效，表现为数值不对而不是功能全失，很难肉眼定位。",
+                    "medium"));
+                break;
+
             case "DestructiveXmlPatchCollision":
                 risks.Add(new AgentHiddenRisk(
                     "删除/替换会抹掉追加内容",
@@ -504,6 +734,10 @@ public sealed class AgentInvestigator : IDisposable
                 $"确认要保留「{conflict.TargetLabel}」的哪个版本；需要合并字段时，让 Agent 生成针对该 def 的 XML 合并补丁。",
             "DestructiveXmlPatchCollision" =>
                 $"先确认两边的执行顺序；若必须同时保留两边的数据，需要 Agent 基于两份 XML 原文生成合并补丁。",
+            "BrokenXmlDefReference" =>
+                $"补上或启用定义「{conflict.TargetLabel}」的模组；若引用本身写错（类型不对、值带空白、名字已改），让 Agent 生成一条 XML 补丁改掉它。",
+            "XmlDefConfigError" =>
+                $"这是「{conflict.ModAName}」自己的数据问题：等作者更新，或让 Agent 生成 XML 补丁修正出错的字段。",
             _ =>
                 "先按推荐顺序排列并在游戏内验证；仍有异常时，配置模型让 Agent 基于代码证据生成兼容补丁。"
         };
@@ -549,6 +783,7 @@ public sealed class AgentInvestigator : IDisposable
     public void Dispose()
     {
         _client?.Dispose();
+        _decompilerTools.Dispose();
         _caseBuilder.Dispose();
         _caseGate.Dispose();
     }

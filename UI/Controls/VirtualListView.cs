@@ -613,7 +613,8 @@ internal sealed class VirtualListView : Control, IWheelScrollable
                 var (accent, pillBg, pillText, gradeLabel) = UiTheme.GradeStyle(grade);
                 var label = cell.Text.StartsWith("1.", StringComparison.Ordinal) ||
                             cell.Text.StartsWith("2.", StringComparison.Ordinal) ||
-                            cell.Text.StartsWith("3.", StringComparison.Ordinal)
+                            cell.Text.StartsWith("3.", StringComparison.Ordinal) ||
+                            cell.Text.StartsWith("4.", StringComparison.Ordinal)
                     ? gradeLabel
                     : cell.Text;
                 var pillWidth = Math.Min(
@@ -651,6 +652,7 @@ internal sealed class VirtualListView : Control, IWheelScrollable
                     "未启用" or "待核查" or "可生成" or "条件性冲突" => UiTheme.AmberText,
                     "已核查" or "已生成" or "已安装" or "静态误报" => UiTheme.GreenText,
                     "确认冲突" or "生成失败" => UiTheme.RoseText,
+                    "已排除" => UiTheme.PurpleText,
                     _ => isSelected ? UiTheme.TextSecondary : UiTheme.TextMuted
                 };
 
@@ -743,6 +745,8 @@ internal sealed class VirtualListView : Control, IWheelScrollable
 
     private static ConflictGrade ParseGrade(string text)
     {
+        if (text.StartsWith("4.", StringComparison.Ordinal) || text == "作者声明不兼容")
+            return ConflictGrade.Purple;
         if (text.StartsWith("3.", StringComparison.Ordinal) || text == "明确冲突")
             return ConflictGrade.Red;
         if (text.StartsWith("2.", StringComparison.Ordinal) || text == "需要确认")

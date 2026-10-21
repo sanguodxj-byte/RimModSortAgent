@@ -99,9 +99,10 @@ public static class TopologicalModSorter
 
     /// <summary>
     /// 底座位次：只依据"是否官方内容"与"是否提供 Harmony 运行时"判断，不做任何模组命名匹配。
-    /// 0 = Harmony 运行时；≥1 = 官方内容（Core 依赖数最少，排在最前）；-1 = 社区模组。
-    /// 注意：这是<b>启发式优先级</b>，不生成任何图边。官方内容领先依赖"几乎所有模组硬依赖 Core"
-    /// 这一事实（About.modDependencies 边），而非底座强制约束。
+    /// 0 = Harmony 运行时；≥1 = 官方内容（按官方权威加载次序）；-1 = 社区模组。
+    /// 注意：这是<b>启发式优先级</b>，不生成任何图边。
+    /// 官方 DLC 不带 modDependencies，彼此只用 forceLoadAfter/forceLoadBefore 表达先后，
+    /// 因此必须用固定的权威次序，不能靠"依赖数"推断——否则乱序输入会把 Core 排到 DLC 之后。
     /// </summary>
     private static int GetBaseRank(ModDescriptor mod)
     {
@@ -111,8 +112,10 @@ public static class TopologicalModSorter
         if (!mod.IsOfficialCoreOrDlc)
             return -1;
 
-        // Core 没有前置依赖 → 最小；DLC 依赖 Core → 紧随其后
-        return 1 + mod.Dependencies.Count;
+        var officialRank = ModListResolver.GetOfficialLoadOrderRank(mod.PackageId);
+        return officialRank >= 0
+            ? 1 + officialRank
+            : 1 + ModListResolver.OfficialLoadOrderCount;
     }
 
     /// <summary>程序集身份判定：文件名就是 Harmony 运行时（0Harmony.dll），与模组命名无关。</summary>

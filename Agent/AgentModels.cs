@@ -73,4 +73,16 @@ public sealed record CompatPatchResult(
     string? AssemblyPath,
     string? CompilerOutput,
     string Message,
-    IReadOnlyList<string> Files);
+    IReadOnlyList<string> Files)
+{
+    /// <summary>本次合并包实际收录的冲突 Key。</summary>
+    public IReadOnlyList<string> IncludedConflictKeys { get; init; } = Array.Empty<string>();
+
+    /// <summary>未并入的冲突及原因，供界面与 README 追溯。</summary>
+    public IReadOnlyList<string> SkippedReasons { get; init; } = Array.Empty<string>();
+
+    /// <summary>Harmony 编译失败项及编译器原文，供 Agent 带错误回修。</summary>
+    public IReadOnlyList<CompatPatchFailure> Failures { get; init; } = Array.Empty<CompatPatchFailure>();
+}
+
+public sealed record CompatPatchFailure(string ConflictKey, string PairLabel, string CompilerOutput);

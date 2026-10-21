@@ -147,7 +147,7 @@ internal sealed class ConflictOverview : Control
 
         if (!_hasReport)
         {
-            DrawCard(g, rects[0], 0, "需要处理", "—", "读取列表后开始检查", UiTheme.Accent, showDot: false);
+            DrawCard(g, rects[0], 0, "需要处理", "—", "尚未检查", UiTheme.Accent, showDot: false);
             DrawCard(g, rects[1], 1, "明确冲突", "0", "会让模组失效", UiTheme.Rose, showDot: false);
             DrawCard(g, rects[2], 2, "需要确认", "0", "取决于运行条件", UiTheme.Amber, showDot: false);
             DrawCard(g, rects[3], 3, "Agent 核查", "—", _agentMode, UiTheme.TextMuted, showDot: false);

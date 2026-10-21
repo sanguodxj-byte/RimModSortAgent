@@ -16,6 +16,9 @@ public static class Program
     {
         Console.OutputEncoding = Encoding.UTF8;
 
+        if (args.Any(a => a.Equals("--selftest", StringComparison.OrdinalIgnoreCase)))
+            return RunSelfTests();
+
         var launchGui = args.Length == 0 || args.Any(a => a.Equals("--gui", StringComparison.OrdinalIgnoreCase));
         string? autoScreenshotPath = null;
         var exitAfterScreenshot = false;
@@ -217,5 +220,34 @@ public static class Program
         }
 
         return 0;
+    }
+
+    /// <summary>检测器的合成夹具自检：全绿才说明"该报的报、不该报的不报"。</summary>
+    private static int RunSelfTests()
+    {
+        var suites = new (string Name, Func<IReadOnlyList<string>> Run)[]
+        {
+            ("XmlCrossReferenceAnalyzer", ModSorterAgent.Analysis.XmlCrossReferenceSelfTest.Run),
+            ("TopologicalModSorter", ModSorterAgent.Sorting.TopologicalSortSelfTest.Run)
+        };
+
+        var failed = 0;
+        foreach (var (name, run) in suites)
+        {
+            var failures = run();
+            if (failures.Count == 0)
+            {
+                Console.WriteLine($"[PASS] {name}");
+                continue;
+            }
+
+            failed++;
+            Console.WriteLine($"[FAIL] {name}：{failures.Count} 条");
+            foreach (var failure in failures)
+                Console.WriteLine($"    - {failure}");
+        }
+
+        Console.WriteLine(failed == 0 ? "自检全部通过。" : $"自检失败：{failed}/{suites.Length} 套。");
+        return failed == 0 ? 0 : 1;
     }
 }

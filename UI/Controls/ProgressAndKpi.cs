@@ -139,6 +139,7 @@ internal enum KpiCard
     Green,
     Yellow,
     Red,
+    Purple,
     Movement
 }
 
@@ -177,14 +178,14 @@ internal sealed class KpiStrip : Control
     {
         var pad = UiTheme.Scale(this, 12);
         var gap = UiTheme.Scale(this, 10);
-        var available = Width - pad * 2 - gap * 4;
+        var available = Width - pad * 2 - gap * 5;
         var height = Height - UiTheme.Scale(this, 10);
 
-        var weights = new[] { 0.24, 0.16, 0.18, 0.18, 0.24 };
-        var rects = new Rectangle[5];
+        var weights = new[] { 0.2, 0.14, 0.15, 0.16, 0.19, 0.16 };
+        var rects = new Rectangle[6];
         var x = pad;
 
-        for (var i = 0; i < 5; i++)
+        for (var i = 0; i < 6; i++)
         {
             var w = (int)(available * weights[i]);
             rects[i] = new Rectangle(x, UiTheme.Scale(this, 5), w, height);
@@ -254,11 +255,12 @@ internal sealed class KpiStrip : Control
 
         if (_report == null)
         {
-            DrawCard(g, rects[0], 0, "总体评级", "待分析", "读取列表后生成报告", UiTheme.Accent, "—");
+            DrawCard(g, rects[0], 0, "总体评级", "待分析", "尚未生成报告", UiTheme.Accent, "—");
             DrawCard(g, rects[1], 1, "1.绿色 · 无冲突", "0", "占总数 0%", UiTheme.Green, "0");
             DrawCard(g, rects[2], 2, "2.黄色 · 代码存疑", "0", "占总数 0%", UiTheme.Amber, "0");
             DrawCard(g, rects[3], 3, "3.红色 · 明确冲突", "0", "占总数 0%", UiTheme.Rose, "0");
-            DrawCard(g, rects[4], 4, "顺位调整 / 实机核验", "—", "尚未执行分析", UiTheme.TextMuted, "—");
+            DrawCard(g, rects[4], 4, "4.紫色 · 作者声明", "0", "占总数 0%", UiTheme.Purple, "0");
+            DrawCard(g, rects[5], 5, "顺位调整 / 实机核验", "—", "尚未执行分析", UiTheme.TextMuted, "—");
             return;
         }
 
@@ -271,10 +273,11 @@ internal sealed class KpiStrip : Control
             ConflictGrade.Green => "1.绿色 · 无冲突",
             ConflictGrade.Yellow => "2.黄色 · 存疑",
             ConflictGrade.Red => "3.红色 · 有冲突",
+            ConflictGrade.Purple => "4.紫色 · 作者声明",
             _ => "未知"
         };
 
-        // 三档统计覆盖排序集合里的全部模组（启用 + 订阅池同一分析口径），分母即总数
+        // 四档统计覆盖排序集合里的全部模组（启用 + 订阅池同一分析口径），分母即总数
         var overallSub = report.WorkshopPoolModCount > 0
             ? $"共 {report.TotalModsAnalyzed} 项 · 含订阅池 {report.WorkshopPoolModCount} 项"
             : $"共 {report.TotalModsAnalyzed} 项 · 版本 {report.TargetGameVersion}";
@@ -293,10 +296,14 @@ internal sealed class KpiStrip : Control
             $"占总数 {report.RedModCount * 100 / total}% · {report.ConflictFindings.Count(f => f.Grade == ConflictGrade.Red)} 对",
             UiTheme.Rose, report.RedModCount.ToString());
 
+        DrawCard(g, rects[4], 4, "4.紫色 · 作者声明", report.PurpleModCount.ToString(),
+            $"占总数 {report.PurpleModCount * 100 / total}% · {report.ConflictFindings.Count(f => f.Grade == ConflictGrade.Purple)} 对",
+            UiTheme.Purple, report.PurpleModCount.ToString());
+
         var gabsText = report.GabsVerification?.Connected == true
             ? "实机已连接"
             : report.GabsVerification != null ? "离线日志核验" : "未核验";
-        DrawCard(g, rects[4], 4, "顺位调整 / 实机状态", $"{report.MovedModCount} 项变动",
+        DrawCard(g, rects[5], 5, "顺位调整 / 实机状态", $"{report.MovedModCount} 项变动",
             $"{gabsText} · 补丁 {report.TotalHarmonyPatchCount} 处",
             report.MovedModCount > 0 ? UiTheme.Accent : UiTheme.TextMuted, report.MovedModCount.ToString());
     }

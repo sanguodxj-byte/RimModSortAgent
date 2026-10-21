@@ -90,7 +90,9 @@ public static class WorkshopSubscriptionScanner
 
         if (!manifestFound)
         {
-            warnings.Add($"未能读取订阅清单（{manifest}），已退化为「磁盘目录即订阅」，可能与 Steam 实际订阅状态不一致。");
+            warnings.Add(string.IsNullOrWhiteSpace(manifest)
+                ? "未能定位 Steam 订阅清单，已退化为「磁盘目录即订阅」，可能与 Steam 实际订阅状态不一致。"
+                : $"未能读取订阅清单（{manifest}），已退化为「磁盘目录即订阅」，可能与 Steam 实际订阅状态不一致。");
         }
 
         var subscribedNotInstalled = subscribedIds
@@ -152,10 +154,10 @@ public static class WorkshopSubscriptionScanner
         }
         catch
         {
-            // 路径异常时回落到默认位置
+            // 路径异常时由调用方按「清单缺失」处理
         }
 
-        return @"D:\Steam\steamapps\workshop\appworkshop_294100.acf";
+        return string.Empty;
     }
 
     private static HashSet<string>? TryReadSubscribedIds(string manifestPath, List<string> warnings)

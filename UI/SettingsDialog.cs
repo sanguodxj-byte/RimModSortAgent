@@ -42,7 +42,6 @@ internal sealed class SettingsDialog : Form
     private bool _dpiScaled;
 
     private readonly string _existingProtectedKey;
-    private readonly string _storePath;
 
     private static readonly Color CardBg = UiTheme.CardBg;
 
@@ -50,7 +49,6 @@ internal sealed class SettingsDialog : Form
     {
         var settings = ModListResolver.PathOptions.Settings;
         _existingProtectedKey = settings.AgentApiKeyProtected;
-        _storePath = Path.Combine(AppContext.BaseDirectory, "AppSettings.json");
 
         Text = "设置";
         StartPosition = FormStartPosition.CenterParent;
@@ -255,7 +253,7 @@ internal sealed class SettingsDialog : Form
 
         var storeLabel = new Label
         {
-            Text = $"设置保存在 {_storePath}",
+            Text = "设置仅保存在本机，不会上传",
             AutoSize = false,
             AutoEllipsis = true,
             Font = UiTheme.SmallFont,
@@ -278,7 +276,7 @@ internal sealed class SettingsDialog : Form
             Height = 32,
             Width = 128,
             BackColor = UiTheme.SurfaceBg,
-            LeadingGlyph = "✓"
+            LeadingGlyph = "◆"
         };
 
         cancel.Click += (_, _) =>
@@ -394,7 +392,7 @@ internal sealed class SettingsDialog : Form
                 IsFile: false),
             new PathSpec(
                 "本地模组工作区目录",
-                "存放若干未打包 mod 文件夹的工作区（留空 = D:\\rim mod）",
+                "存放若干未打包 mod 文件夹的工作区（留空 = 不扫描）",
                 s => s.LocalModWorkspaceDir,
                 (s, v) => s.LocalModWorkspaceDir = v,
                 null,
@@ -483,7 +481,7 @@ internal sealed class SettingsDialog : Form
         if (!any)
         {
             MessageBox.Show(this,
-                "未检测到任何可自动识别的路径，请手动浏览选择。", "自动检测",
+                "未检测到任何可自动识别的路径。", "自动检测",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
         }
     }
@@ -494,7 +492,7 @@ internal sealed class SettingsDialog : Form
         if (detected == null)
         {
             MessageBox.Show(this,
-                $"未能自动检测到「{spec.Title}」，请手动浏览选择。", "自动检测",
+                $"未能自动检测到「{spec.Title}」。", "自动检测",
                 MessageBoxButtons.OK, MessageBoxIcon.Information);
             return;
         }
@@ -626,8 +624,8 @@ internal sealed class SettingsDialog : Form
                     exists ? UiTheme.Green : UiTheme.Rose,
                     exists ? UiTheme.GreenBg : UiTheme.RoseBg);
                 _statusLabel.Text = exists
-                    ? "✓ 已找到：" + value
-                    : "⚠ 路径不存在，保存时会再次确认";
+                    ? "● 已找到：" + value
+                    : "○ 路径不存在";
                 _statusLabel.ForeColor = exists ? UiTheme.GreenText : UiTheme.RoseText;
             }
             else
@@ -1025,10 +1023,10 @@ internal sealed class SettingsDialog : Form
         };
         var pathLabel = new Label
         {
-            Text = _storePath,
+            Text = "AppSettings.json · 与程序同目录",
             AutoSize = false,
             AutoEllipsis = true,
-            Font = UiTheme.MonoSmallFont,
+            Font = UiTheme.SmallFont,
             ForeColor = UiTheme.TextSecondary,
             BackColor = CardBg,
             Location = new Point(18, 44),
@@ -1122,7 +1120,7 @@ internal sealed class SettingsDialog : Form
         {
             ShowPage(1, updateNav: true);
             MessageBox.Show(this,
-                "已选择模型接口，但模型名称为空。\n请填写模型名称，或把启用方式改回「仅本地核查」。",
+                "已选择模型接口，但模型名称为空。\n模型接口需要同时填写模型名称，否则设置无法保存。",
                 "Agent 设置", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             _modelInput.SelectAll();
             return;

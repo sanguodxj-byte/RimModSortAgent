@@ -8,7 +8,8 @@ public enum ConflictGrade
 {
     Green = 1,
     Yellow = 2,
-    Red = 3
+    Red = 3,
+    Purple = 4
 }
 
 [JsonConverter(typeof(JsonStringEnumConverter))]
@@ -134,6 +135,7 @@ public sealed record ModGradeSummary(
     string GradeLabel,
     int RedConflictCount,
     int YellowUncertaintyCount,
+    int PurpleConflictCount,
     int HarmonyPatchCount,
     int DynamicPatchSiteCount,
     int XmlDefCount,
@@ -189,6 +191,7 @@ public sealed record ModSortReport(
     int GreenModCount,
     int YellowModCount,
     int RedModCount,
+    int PurpleModCount,
     IReadOnlyList<string> MissingDependencies,
     IReadOnlyList<string> HardCycleDescriptions,
     IReadOnlyList<ModGradeSummary> SortedMods,

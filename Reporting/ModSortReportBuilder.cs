@@ -41,14 +41,17 @@ public static class ModSortReportBuilder
                 ? list
                 : (IReadOnlyList<PairwiseConflictFinding>)Array.Empty<PairwiseConflictFinding>();
 
+            var purpleCount = related.Count(f => f.Grade == ConflictGrade.Purple);
             var redCount = related.Count(f => f.Grade == ConflictGrade.Red);
             var yellowCount = related.Count(f => f.Grade == ConflictGrade.Yellow);
 
-            var grade = redCount > 0
-                ? ConflictGrade.Red
-                : yellowCount > 0
-                    ? ConflictGrade.Yellow
-                    : ConflictGrade.Green;
+            var grade = purpleCount > 0
+                ? ConflictGrade.Purple
+                : redCount > 0
+                    ? ConflictGrade.Red
+                    : yellowCount > 0
+                        ? ConflictGrade.Yellow
+                        : ConflictGrade.Green;
 
             var reasons = new List<string>(capacity: 8);
             foreach (var finding in related.Where(f => f.Grade != ConflictGrade.Green).Take(6))
@@ -86,6 +89,7 @@ public static class ModSortReportBuilder
                 GradeLabel: GetGradeLabel(grade),
                 RedConflictCount: redCount,
                 YellowUncertaintyCount: yellowCount,
+                PurpleConflictCount: purpleCount,
                 HarmonyPatchCount: mod.AssemblyAnalyses.Sum(a => a.Patches.Count),
                 DynamicPatchSiteCount: mod.AssemblyAnalyses.Sum(a => a.DynamicPatchSites.Count),
                 XmlDefCount: mod.XmlDefs.Count,
@@ -111,14 +115,17 @@ public static class ModSortReportBuilder
             });
         }
 
-        // 全量深度分析：启用列表与订阅池口径一致，三档统计覆盖排序集合里的所有模组
+        // 全量深度分析：启用列表与订阅池口径一致，四档统计覆盖排序集合里的所有模组
         var greenMods = summaries.Count(m => m.Grade == ConflictGrade.Green);
         var yellowMods = summaries.Count(m => m.Grade == ConflictGrade.Yellow);
         var redMods = summaries.Count(m => m.Grade == ConflictGrade.Red);
+        var purpleMods = summaries.Count(m => m.Grade == ConflictGrade.Purple);
         var movedMods = summaries.Count(m => m.IsActive && m.OrderDelta != 0);
 
         var overallGrade = ConflictGrade.Green;
-        if (redMods > 0 || missingDependencies.Count > 0 || hardCycles.Count > 0)
+        if (purpleMods > 0)
+            overallGrade = ConflictGrade.Purple;
+        else if (redMods > 0 || missingDependencies.Count > 0 || hardCycles.Count > 0)
             overallGrade = ConflictGrade.Red;
         else if (yellowMods > 0)
             overallGrade = ConflictGrade.Yellow;
@@ -138,6 +145,7 @@ public static class ModSortReportBuilder
             GreenModCount: greenMods,
             YellowModCount: yellowMods,
             RedModCount: redMods,
+            PurpleModCount: purpleMods,
             MissingDependencies: missingDependencies,
             HardCycleDescriptions: hardCycles,
             SortedMods: summaries,
@@ -277,6 +285,7 @@ public static class ModSortReportBuilder
             ConflictGrade.Green => "1.绿色 (确认无冲突)",
             ConflictGrade.Yellow => "2.黄色 (无法通过代码分析判断)",
             ConflictGrade.Red => "3.红色 (明确冲突)",
+            ConflictGrade.Purple => "4.紫色 (作者声明不兼容)",
             _ => "未知"
         };
     }
@@ -288,6 +297,7 @@ public static class ModSortReportBuilder
             ConflictGrade.Green => "1.绿色",
             ConflictGrade.Yellow => "2.黄色",
             ConflictGrade.Red => "3.红色",
+            ConflictGrade.Purple => "4.紫色",
             _ => "未知"
         };
     }
@@ -307,12 +317,12 @@ public static class ModSortReportBuilder
             sb.AppendLine($"- 排序集合: {report.TotalModsAnalyzed} 项（已启用 {activeCount} + 工坊订阅池 {report.WorkshopPoolModCount}）");
             sb.AppendLine($"- 工坊订阅: {report.WorkshopSubscribedCount} 项" +
                           (report.WorkshopMissingOnDiskCount > 0 ? $"，其中 {report.WorkshopMissingOnDiskCount} 项未下载完成" : string.Empty));
-            sb.AppendLine($"- 全量定级: 1.绿色 {report.GreenModCount}，2.黄色 {report.YellowModCount}，3.红色 {report.RedModCount}（全部模组同一分析口径）");
+            sb.AppendLine($"- 全量定级: 1.绿色 {report.GreenModCount}，2.黄色 {report.YellowModCount}，3.红色 {report.RedModCount}，4.紫色 {report.PurpleModCount}（全部模组同一分析口径）");
             sb.AppendLine($"- 顺位调整模组数: {report.MovedModCount} / {activeCount}（订阅池无原始顺位，不计入）");
         }
         else
         {
-            sb.AppendLine($"- 模组总数: {report.TotalModsAnalyzed}（1.绿色: {report.GreenModCount}，2.黄色: {report.YellowModCount}，3.红色: {report.RedModCount}）");
+            sb.AppendLine($"- 模组总数: {report.TotalModsAnalyzed}（1.绿色: {report.GreenModCount}，2.黄色: {report.YellowModCount}，3.红色: {report.RedModCount}，4.紫色: {report.PurpleModCount}）");
             sb.AppendLine($"- 顺位调整模组数: {report.MovedModCount} / {report.TotalModsAnalyzed}");
         }
         sb.AppendLine($"- 扫描统计: Harmony 补丁 {report.TotalHarmonyPatchCount} 处（其中动态反射点 {report.TotalDynamicPatchSiteCount} 处），XML Def {report.TotalXmlDefCount} 项，XML Patch {report.TotalXmlPatchCount} 项");
@@ -383,9 +393,10 @@ public static class ModSortReportBuilder
         }
         sb.AppendLine();
 
-        AppendFindingsSection(sb, report, ConflictGrade.Red, "二、3.红色（明确冲突）明细");
-        AppendFindingsSection(sb, report, ConflictGrade.Yellow, "三、2.黄色（无法通过代码分析完全判断）明细");
-        AppendFindingsSection(sb, report, ConflictGrade.Green, "四、1.绿色（共同作用于同一目标但确认无冲突）明细");
+        AppendFindingsSection(sb, report, ConflictGrade.Purple, "二、4.紫色（作者声明不兼容）明细");
+        AppendFindingsSection(sb, report, ConflictGrade.Red, "三、3.红色（明确冲突）明细");
+        AppendFindingsSection(sb, report, ConflictGrade.Yellow, "四、2.黄色（无法通过代码分析完全判断）明细");
+        AppendFindingsSection(sb, report, ConflictGrade.Green, "五、1.绿色（共同作用于同一目标但确认无冲突）明细");
 
         return sb.ToString();
     }

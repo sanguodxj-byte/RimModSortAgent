@@ -4,7 +4,7 @@ namespace ModSorterAgent.Services;
 
 /// <summary>
 /// 应用设置（路径覆盖项），持久化到 exe 旁的 AppSettings.json。
-/// 所有字段留空 = 使用内置默认路径（D:\Steam\... 与 LocalLow 用户目录）。
+/// 所有字段留空 = 使用自动检测路径（Steam 库与当前用户 LocalLow 目录）。
 /// </summary>
 public sealed class AppSettings
 {
@@ -97,9 +97,6 @@ public static class PathAutoDetector
         foreach (var drive in DriveReadyRoots())
             Add(Path.Combine(drive, "SteamLibrary"));
 
-        // 现行默认位置（保持向后兼容）
-        Add(@"D:\Steam");
-
         return seen;
     }
 
@@ -116,7 +113,9 @@ public static class PathAutoDetector
         }
         catch
         {
-            roots.Add("C:\\");
+            var systemRoot = Path.GetPathRoot(Environment.SystemDirectory);
+            if (!string.IsNullOrWhiteSpace(systemRoot))
+                roots.Add(systemRoot!);
         }
         return roots;
     }
@@ -136,7 +135,7 @@ public static class PathAutoDetector
 
                 foreach (var line in File.ReadLines(vdf))
                 {
-                    // 形如 "path"		"D:\\SteamLibrary"
+                    // 形如 "path"		"<Steam 库路径>"
                     var trimmed = line.Trim();
                     if (!trimmed.StartsWith("\"path\"", StringComparison.OrdinalIgnoreCase))
                         continue;
@@ -208,8 +207,8 @@ public static class PathAutoDetector
         return null;
     }
 
-    /// <summary>检测 ModsConfig.xml（LocalLow\Ludeon Studios\RimWorld by Ludeon Studios\Config）。</summary>
-    public static string? DetectModsConfigPath()
+    /// <summary>当前用户的标准 ModsConfig.xml 位置（不要求文件已存在）。</summary>
+    public static string? GetStandardModsConfigPath()
     {
         try
         {
@@ -217,16 +216,21 @@ public static class PathAutoDetector
             if (string.IsNullOrWhiteSpace(userProfile))
                 return null;
 
-            var candidate = Path.Combine(
+            return Path.Combine(
                 userProfile, "AppData", "LocalLow",
                 "Ludeon Studios", "RimWorld by Ludeon Studios", "Config", "ModsConfig.xml");
-
-            return File.Exists(candidate) ? candidate : null;
         }
         catch
         {
             return null;
         }
+    }
+
+    /// <summary>检测当前用户是否已有 ModsConfig.xml。</summary>
+    public static string? DetectModsConfigPath()
+    {
+        var candidate = GetStandardModsConfigPath();
+        return candidate != null && File.Exists(candidate) ? candidate : null;
     }
 
     private static bool LooksLikeRimWorldInstall(string dir)

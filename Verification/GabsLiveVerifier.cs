@@ -7,9 +7,61 @@ namespace ModSorterAgent.Verification;
 
 public static class GabsLiveVerifier
 {
-    public const string DefaultGabsExePath = @"D:\rim mod\GABS\gabs.exe";
-    public const string DefaultGabsRuntimeJsonPath = @"C:\Users\Administrator\.gabs\rimworld\runtime.json";
-    public const string DefaultPlayerLogPath = @"C:\Users\Administrator\AppData\LocalLow\Ludeon Studios\RimWorld by Ludeon Studios\Player.log";
+    /// <summary>GABS 可执行文件：环境变量 GABS_EXE → 应用目录及其祖先下的 GABS 目录 → 用户目录。</summary>
+    public static string DefaultGabsExePath { get; } = ResolveGabsExePath();
+
+    public static string DefaultGabsRuntimeJsonPath { get; } = Path.Combine(
+        Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".gabs", "rimworld", "runtime.json");
+
+    /// <summary>
+    /// 玩家日志路径。原版写在配置根目录，Waylith 构建写在 Logs/ 子目录，两处都探一遍。
+    /// </summary>
+    public static string DefaultPlayerLogPath { get; } = ResolvePlayerLogPath();
+
+    private static string ResolvePlayerLogPath()
+    {
+        var configDir = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
+            "AppData", "LocalLow", "Ludeon Studios", "RimWorld by Ludeon Studios");
+
+        var candidates = new[]
+        {
+            Path.Combine(configDir, "Logs", "Player.log"),
+            Path.Combine(configDir, "Player.log")
+        };
+
+        return candidates.FirstOrDefault(File.Exists) ?? candidates[0];
+    }
+
+    private static string ResolveGabsExePath()
+    {
+        var fromEnvironment = Environment.GetEnvironmentVariable("GABS_EXE");
+        if (!string.IsNullOrWhiteSpace(fromEnvironment) && File.Exists(fromEnvironment))
+            return fromEnvironment;
+
+        for (var dir = new DirectoryInfo(AppContext.BaseDirectory); dir != null; dir = dir.Parent)
+        {
+            var candidate = Path.Combine(dir.FullName, "GABS", "gabs.exe");
+            if (File.Exists(candidate))
+                return candidate;
+        }
+
+        var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        if (!string.IsNullOrWhiteSpace(userProfile))
+        {
+            foreach (var candidate in new[]
+            {
+                Path.Combine(userProfile, ".gabs", "gabs.exe"),
+                Path.Combine(userProfile, "GABS", "gabs.exe")
+            })
+            {
+                if (File.Exists(candidate))
+                    return candidate;
+            }
+        }
+
+        return Path.Combine(AppContext.BaseDirectory, "gabs.exe");
+    }
 
     // HARD SAFETY RULE: Never invoke games_stop, games_kill, or terminate RimWorld under any circumstance.
     private static readonly HashSet<string> AllowedGabsTools = new(StringComparer.OrdinalIgnoreCase)

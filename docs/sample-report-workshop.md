@@ -24,7 +24,7 @@
 
 ## 工坊订阅检测
 
-- 订阅清单: D:\Steam\steamapps\workshop\appworkshop_294100.acf
+- 订阅清单: <工坊>\appworkshop_294100.acf
 - 订阅条目: 680 项
 - 并入排序: 655 项未启用模组（与启用列表同口径：XML Def 扫描 + 程序集反编译 + Harmony 特征提取）
 - 未下载完成: 2 项（未纳入排序）
@@ -753,407 +753,407 @@
 - 冲突目标: Defs/PawnRenderTreeDef//li[texPath="Things/Pawn/Humanlike/Apparel/SwaddledBaby/Swaddled_Child"]/nodeClass
 - 结论说明: Humanoid Alien Races 与 Humanoid Alien Races ~ Dev 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: Humanoid Alien Races: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\839005762\1.7\Patches\HumansAreAliensToo.xml)
-  - 证据: Humanoid Alien Races ~ Dev: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2640710953\1.7\Patches\HumansAreAliensToo.xml)
+  - 证据: Humanoid Alien Races: PatchOperationReplace (<工坊内容>\839005762\1.7\Patches\HumansAreAliensToo.xml)
+  - 证据: Humanoid Alien Races ~ Dev: PatchOperationReplace (<工坊内容>\2640710953\1.7\Patches\HumansAreAliensToo.xml)
 
 ### [DestructiveXmlPatchCollision] VGP Vegetable Garden ↔ VGP Garden Fabrics Simplified
 - 冲突目标: Defs/ThingDef[defName = "Plant_Cotton"]/graphicData/texPath
 - 结论说明: VGP Vegetable Garden 与 VGP Garden Fabrics Simplified 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: VGP Vegetable Garden: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2007061826\1.7\Patches\Vanilla_Plants_Art.xml)
-  - 证据: VGP Garden Fabrics Simplified: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2007062335\1.6\Patches\Vanilla_Plants.xml)
+  - 证据: VGP Vegetable Garden: PatchOperationReplace (<工坊内容>\2007061826\1.7\Patches\Vanilla_Plants_Art.xml)
+  - 证据: VGP Garden Fabrics Simplified: PatchOperationReplace (<工坊内容>\2007062335\1.6\Patches\Vanilla_Plants.xml)
 
 ### [DestructiveXmlPatchCollision] VGP Vegetable Garden ↔ VGP Garden Fabrics Simplified
 - 冲突目标: Defs/ThingDef[defName = "Plant_Cotton"]/plant/immatureGraphicPath
 - 结论说明: VGP Vegetable Garden 与 VGP Garden Fabrics Simplified 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: VGP Vegetable Garden: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2007061826\1.7\Patches\Vanilla_Plants_Art.xml)
-  - 证据: VGP Garden Fabrics Simplified: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2007062335\1.6\Patches\Vanilla_Plants.xml)
+  - 证据: VGP Vegetable Garden: PatchOperationReplace (<工坊内容>\2007061826\1.7\Patches\Vanilla_Plants_Art.xml)
+  - 证据: VGP Garden Fabrics Simplified: PatchOperationReplace (<工坊内容>\2007062335\1.6\Patches\Vanilla_Plants.xml)
 
 ### [DestructiveXmlPatchCollision] VGP Vegetable Garden ↔ VGP Garden Fabrics Simplified
 - 冲突目标: Defs/ThingDef[defName = "Plant_Devilstrand"]/graphicData/texPath
 - 结论说明: VGP Vegetable Garden 与 VGP Garden Fabrics Simplified 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: VGP Vegetable Garden: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2007061826\1.7\Patches\Vanilla_Plants_Art.xml)
-  - 证据: VGP Garden Fabrics Simplified: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2007062335\1.6\Patches\Vanilla_Plants.xml)
+  - 证据: VGP Vegetable Garden: PatchOperationReplace (<工坊内容>\2007061826\1.7\Patches\Vanilla_Plants_Art.xml)
+  - 证据: VGP Garden Fabrics Simplified: PatchOperationReplace (<工坊内容>\2007062335\1.6\Patches\Vanilla_Plants.xml)
 
 ### [DestructiveXmlPatchCollision] Humanoid Alien Races ↔ Humanoid Alien Races ~ Dev
 - 冲突目标: Defs/ThingDef[defName="Human" or defName="CreepJoiner"]
 - 结论说明: Humanoid Alien Races 与 Humanoid Alien Races ~ Dev 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: Humanoid Alien Races: PatchOperationAttributeSet (D:\Steam\steamapps\workshop\content\294100\839005762\1.7\Patches\HumansAreAliensToo.xml)
-  - 证据: Humanoid Alien Races ~ Dev: PatchOperationAttributeSet (D:\Steam\steamapps\workshop\content\294100\2640710953\1.7\Patches\HumansAreAliensToo.xml)
+  - 证据: Humanoid Alien Races: PatchOperationAttributeSet (<工坊内容>\839005762\1.7\Patches\HumansAreAliensToo.xml)
+  - 证据: Humanoid Alien Races ~ Dev: PatchOperationAttributeSet (<工坊内容>\2640710953\1.7\Patches\HumansAreAliensToo.xml)
 
 ### [DestructiveXmlPatchCollision] Vanilla Textures Expanded ↔ [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods
 - 冲突目标: Defs/ThingDef[defName="MealFine"]/graphicData/texPath
 - 结论说明: Vanilla Textures Expanded 与 [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: Vanilla Textures Expanded: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
-  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\3050762215\Patches\Food_Patch.xml)
+  - 证据: Vanilla Textures Expanded: PatchOperationReplace (<工坊内容>\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
+  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (<工坊内容>\3050762215\Patches\Food_Patch.xml)
 
 ### [DestructiveXmlPatchCollision] Vanilla Textures Expanded ↔ [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods
 - 冲突目标: Defs/ThingDef[defName="MealFine_Meat"]/graphicData/texPath
 - 结论说明: Vanilla Textures Expanded 与 [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: Vanilla Textures Expanded: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
-  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\3050762215\Patches\Food_Patch.xml)
+  - 证据: Vanilla Textures Expanded: PatchOperationReplace (<工坊内容>\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
+  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (<工坊内容>\3050762215\Patches\Food_Patch.xml)
 
 ### [DestructiveXmlPatchCollision] Vanilla Textures Expanded ↔ [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods
 - 冲突目标: Defs/ThingDef[defName="MealFine_Veg"]/graphicData/texPath
 - 结论说明: Vanilla Textures Expanded 与 [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: Vanilla Textures Expanded: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
-  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\3050762215\Patches\Food_Patch.xml)
+  - 证据: Vanilla Textures Expanded: PatchOperationReplace (<工坊内容>\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
+  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (<工坊内容>\3050762215\Patches\Food_Patch.xml)
 
 ### [DestructiveXmlPatchCollision] Vanilla Textures Expanded ↔ [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods
 - 冲突目标: Defs/ThingDef[defName="MealLavish"]/graphicData/texPath
 - 结论说明: Vanilla Textures Expanded 与 [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: Vanilla Textures Expanded: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
-  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\3050762215\Patches\Food_Patch.xml)
+  - 证据: Vanilla Textures Expanded: PatchOperationReplace (<工坊内容>\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
+  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (<工坊内容>\3050762215\Patches\Food_Patch.xml)
 
 ### [DestructiveXmlPatchCollision] Vanilla Textures Expanded ↔ [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods
 - 冲突目标: Defs/ThingDef[defName="MealLavish_Meat"]/graphicData/texPath
 - 结论说明: Vanilla Textures Expanded 与 [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: Vanilla Textures Expanded: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
-  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\3050762215\Patches\Food_Patch.xml)
+  - 证据: Vanilla Textures Expanded: PatchOperationReplace (<工坊内容>\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
+  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (<工坊内容>\3050762215\Patches\Food_Patch.xml)
 
 ### [DestructiveXmlPatchCollision] Vanilla Textures Expanded ↔ [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods
 - 冲突目标: Defs/ThingDef[defName="MealLavish_Veg"]/graphicData/texPath
 - 结论说明: Vanilla Textures Expanded 与 [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: Vanilla Textures Expanded: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
-  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\3050762215\Patches\Food_Patch.xml)
+  - 证据: Vanilla Textures Expanded: PatchOperationReplace (<工坊内容>\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
+  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (<工坊内容>\3050762215\Patches\Food_Patch.xml)
 
 ### [DestructiveXmlPatchCollision] Vanilla Textures Expanded ↔ [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods
 - 冲突目标: Defs/ThingDef[defName="MealNutrientPaste"]/graphicData/texPath
 - 结论说明: Vanilla Textures Expanded 与 [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: Vanilla Textures Expanded: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
-  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\3050762215\Patches\Food_Patch.xml)
+  - 证据: Vanilla Textures Expanded: PatchOperationReplace (<工坊内容>\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
+  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (<工坊内容>\3050762215\Patches\Food_Patch.xml)
 
 ### [DestructiveXmlPatchCollision] Vanilla Textures Expanded ↔ [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods
 - 冲突目标: Defs/ThingDef[defName="MealSimple"]/graphicData/texPath
 - 结论说明: Vanilla Textures Expanded 与 [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: Vanilla Textures Expanded: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
-  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\3050762215\Patches\Food_Patch.xml)
+  - 证据: Vanilla Textures Expanded: PatchOperationReplace (<工坊内容>\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
+  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (<工坊内容>\3050762215\Patches\Food_Patch.xml)
 
 ### [DestructiveXmlPatchCollision] Vanilla Textures Expanded ↔ [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods
 - 冲突目标: Defs/ThingDef[defName="MealSurvivalPack"]/graphicData/texPath
 - 结论说明: Vanilla Textures Expanded 与 [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods 在无依赖关系下对同一 XPath 节点执行了无条件替换或删除，存在直接覆盖冲突
 - 处置建议: 两个无依赖模组同时替换或删除同一节点，后执行者可能报错或吞掉前置改动
-  - 证据: Vanilla Textures Expanded: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
-  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (D:\Steam\steamapps\workshop\content\294100\3050762215\Patches\Food_Patch.xml)
+  - 证据: Vanilla Textures Expanded: PatchOperationReplace (<工坊内容>\2016436324\1.6\Patches\ModSettings\Special-Patches.xml)
+  - 证据: [TW1.7]堂丸贴图重置~食物 TangW's~Retexture~Foods: PatchOperationReplace (<工坊内容>\3050762215\Patches\Food_Patch.xml)
 
 ### [DuplicateXmlDefOverwrite] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: ThingDef:AirConOutdoorUnit
 - 结论说明: Dubs Bad Hygiene Lite 与 Dubs Bad Hygiene 在无依赖关系下重复定义了核心 XML Def（ThingDef:AirConOutdoorUnit），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: Dubs Bad Hygiene Lite: D:\Steam\steamapps\workshop\content\294100\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsE_Heating.xml
-  - 证据: Dubs Bad Hygiene: D:\Steam\steamapps\workshop\content\294100\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsE_Heating.xml
+  - 证据: Dubs Bad Hygiene Lite: <工坊内容>\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsE_Heating.xml
+  - 证据: Dubs Bad Hygiene: <工坊内容>\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsE_Heating.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:Bullet_BFR_AP
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:Bullet_BFR_AP），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
 
 ### [DuplicateXmlDefOverwrite] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: ThingDef:BurnPit
 - 结论说明: Dubs Bad Hygiene Lite 与 Dubs Bad Hygiene 在无依赖关系下重复定义了核心 XML Def（ThingDef:BurnPit），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: Dubs Bad Hygiene Lite: D:\Steam\steamapps\workshop\content\294100\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
-  - 证据: Dubs Bad Hygiene: D:\Steam\steamapps\workshop\content\294100\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
+  - 证据: Dubs Bad Hygiene Lite: <工坊内容>\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
+  - 证据: Dubs Bad Hygiene: <工坊内容>\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
 
 ### [DuplicateXmlDefOverwrite] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: ThingDef:DBHSwimmingPool
 - 结论说明: Dubs Bad Hygiene Lite 与 Dubs Bad Hygiene 在无依赖关系下重复定义了核心 XML Def（ThingDef:DBHSwimmingPool），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: Dubs Bad Hygiene Lite: D:\Steam\steamapps\workshop\content\294100\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsC_Joy.xml
-  - 证据: Dubs Bad Hygiene: D:\Steam\steamapps\workshop\content\294100\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsC_Joy.xml
+  - 证据: Dubs Bad Hygiene Lite: <工坊内容>\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsC_Joy.xml
+  - 证据: Dubs Bad Hygiene: <工坊内容>\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsC_Joy.xml
 
 ### [DuplicateXmlDefOverwrite] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: ThingDef:DBH_WaterBottle
 - 结论说明: Dubs Bad Hygiene Lite 与 Dubs Bad Hygiene 在无依赖关系下重复定义了核心 XML Def（ThingDef:DBH_WaterBottle），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: Dubs Bad Hygiene Lite: D:\Steam\steamapps\workshop\content\294100\2570319432\1.7\Defs\ThingDefs_Items\Items_Resource_Stuff.xml
-  - 证据: Dubs Bad Hygiene: D:\Steam\steamapps\workshop\content\294100\836308268\1.7\Defs\ThingDefs_Items\Items_Resource_Stuff.xml
+  - 证据: Dubs Bad Hygiene Lite: <工坊内容>\2570319432\1.7\Defs\ThingDefs_Items\Items_Resource_Stuff.xml
+  - 证据: Dubs Bad Hygiene: <工坊内容>\836308268\1.7\Defs\ThingDefs_Items\Items_Resource_Stuff.xml
 
 ### [DuplicateXmlDefOverwrite] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: ThingDef:DeepWaterWellInlet
 - 结论说明: Dubs Bad Hygiene Lite 与 Dubs Bad Hygiene 在无依赖关系下重复定义了核心 XML Def（ThingDef:DeepWaterWellInlet），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: Dubs Bad Hygiene Lite: D:\Steam\steamapps\workshop\content\294100\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
-  - 证据: Dubs Bad Hygiene: D:\Steam\steamapps\workshop\content\294100\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
+  - 证据: Dubs Bad Hygiene Lite: <工坊内容>\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
+  - 证据: Dubs Bad Hygiene: <工坊内容>\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:GunlanceAfterIgnition
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:GunlanceAfterIgnition），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_HighTech.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Gunlance.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_HighTech.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Gunlance.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:GunlancePreIgnition
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:GunlancePreIgnition），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_HighTech.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Gunlance.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_HighTech.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Gunlance.xml
 
 ### [DuplicateXmlDefOverwrite] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: ThingDef:PrimitiveWell
 - 结论说明: Dubs Bad Hygiene Lite 与 Dubs Bad Hygiene 在无依赖关系下重复定义了核心 XML Def（ThingDef:PrimitiveWell），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: Dubs Bad Hygiene Lite: D:\Steam\steamapps\workshop\content\294100\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
-  - 证据: Dubs Bad Hygiene: D:\Steam\steamapps\workshop\content\294100\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
+  - 证据: Dubs Bad Hygiene Lite: <工坊内容>\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
+  - 证据: Dubs Bad Hygiene: <工坊内容>\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_AutoCrossBow
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_AutoCrossBow），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_Axe
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_Axe），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Util.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Util.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_Cleaver
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_Cleaver），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Util.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Util.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_Crossbow
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_Crossbow），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_Dagger
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_Dagger），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_ElectricSmithy
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_ElectricSmithy），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_ElectricTailoringBench
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_ElectricTailoringBench），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_EmpBomb
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_EmpBomb），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingDefs_Building\Buildings_RatkinTunnel.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingDefs_Building\Buildings_RatkinTunnel.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingDefs_Building\Buildings_RatkinTunnel.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingDefs_Building\Buildings_RatkinTunnel.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_Fork
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_Fork），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Util.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Util.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_FueledSmithy
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_FueledSmithy），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_Halberd
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_Halberd），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_HamsterWheelGenerator
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_HamsterWheelGenerator），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingDefs_Building\Buildings_Power.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingDefs_Building\Buildings_Power.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingDefs_Building\Buildings_Power.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingDefs_Building\Buildings_Power.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_HandTailoringBench
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_HandTailoringBench），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingDefs_Building\Buildings_Production.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_HeavyLance
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_HeavyLance），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_HeavyShield
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_HeavyShield），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Apparel_Shield.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Apparel.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Apparel_Shield.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Apparel.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_Hockey
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_Hockey），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Util.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Util.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_KingHamster
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_KingHamster），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingDefs_Races\RK_Animal.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingDefs_Races\RK_Animal.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingDefs_Races\RK_Animal.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingDefs_Races\RK_Animal.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_LightLance
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_LightLance），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_LongSword
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_LongSword），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_Mace
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_Mace），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_MagicWand
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_MagicWand），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_DropOnly.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_EnemyWeapon.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_DropOnly.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_EnemyWeapon.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_OneHanded
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_OneHanded），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_PrototypePulseRifle
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_PrototypePulseRifle），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_Rifle
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_Rifle），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_SniperRifle
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_SniperRifle），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Range.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Weapon.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_Spear
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_Spear），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_StrawberryBeer
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_StrawberryBeer），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\Things_ItemDefs\Thing_Drink.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Beer.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\Things_ItemDefs\Thing_Drink.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Beer.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_TwoHanded
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_TwoHanded），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Weapon_Melee.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Lance.xml
 
 ### [DuplicateXmlDefOverwrite] NewRatkinPlus ↔ NewRatkinPlus[1.6]
 - 冲突目标: ThingDef:RK_WoodenShield
 - 结论说明: NewRatkinPlus 与 NewRatkinPlus[1.6] 在无依赖关系下重复定义了核心 XML Def（ThingDef:RK_WoodenShield），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: NewRatkinPlus: D:\Steam\steamapps\workshop\content\294100\1578693166\1.6\Defs\ThingsDefs\Apparel_Shield.xml
-  - 证据: NewRatkinPlus[1.6]: D:\Steam\steamapps\workshop\content\294100\3497673755\1.6\Defs\ThingsDefs\RK_Apparel.xml
+  - 证据: NewRatkinPlus: <工坊内容>\1578693166\1.6\Defs\ThingsDefs\Apparel_Shield.xml
+  - 证据: NewRatkinPlus[1.6]: <工坊内容>\3497673755\1.6\Defs\ThingsDefs\RK_Apparel.xml
 
 ### [DuplicateXmlDefOverwrite] VGP Garden Gourmet ↔ VGP Garden Drinks
 - 冲突目标: ThingDef:Rawsugarcane
 - 结论说明: VGP Garden Gourmet 与 VGP Garden Drinks 在无依赖关系下重复定义了核心 XML Def（ThingDef:Rawsugarcane），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: VGP Garden Gourmet: D:\Steam\steamapps\workshop\content\294100\2007062982\1.6\Defs\ThingDefs\Items_Resources.xml
-  - 证据: VGP Garden Drinks: D:\Steam\steamapps\workshop\content\294100\2167582651\1.6\Defs\ThingDefs\Items_Resources.xml
+  - 证据: VGP Garden Gourmet: <工坊内容>\2007062982\1.6\Defs\ThingDefs\Items_Resources.xml
+  - 证据: VGP Garden Drinks: <工坊内容>\2167582651\1.6\Defs\ThingDefs\Items_Resources.xml
 
 ### [DuplicateXmlDefOverwrite] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: ThingDef:ToiletStuff
 - 结论说明: Dubs Bad Hygiene Lite 与 Dubs Bad Hygiene 在无依赖关系下重复定义了核心 XML Def（ThingDef:ToiletStuff），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: Dubs Bad Hygiene Lite: D:\Steam\steamapps\workshop\content\294100\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
-  - 证据: Dubs Bad Hygiene: D:\Steam\steamapps\workshop\content\294100\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
+  - 证据: Dubs Bad Hygiene Lite: <工坊内容>\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
+  - 证据: Dubs Bad Hygiene: <工坊内容>\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsB_Hygiene.xml
 
 ### [DuplicateXmlDefOverwrite] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: ThingDef:WaterButt
 - 结论说明: Dubs Bad Hygiene Lite 与 Dubs Bad Hygiene 在无依赖关系下重复定义了核心 XML Def（ThingDef:WaterButt），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: Dubs Bad Hygiene Lite: D:\Steam\steamapps\workshop\content\294100\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
-  - 证据: Dubs Bad Hygiene: D:\Steam\steamapps\workshop\content\294100\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
+  - 证据: Dubs Bad Hygiene Lite: <工坊内容>\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
+  - 证据: Dubs Bad Hygiene: <工坊内容>\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
 
 ### [DuplicateXmlDefOverwrite] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: ThingDef:WaterTowerL
 - 结论说明: Dubs Bad Hygiene Lite 与 Dubs Bad Hygiene 在无依赖关系下重复定义了核心 XML Def（ThingDef:WaterTowerL），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: Dubs Bad Hygiene Lite: D:\Steam\steamapps\workshop\content\294100\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
-  - 证据: Dubs Bad Hygiene: D:\Steam\steamapps\workshop\content\294100\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
+  - 证据: Dubs Bad Hygiene Lite: <工坊内容>\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
+  - 证据: Dubs Bad Hygiene: <工坊内容>\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
 
 ### [DuplicateXmlDefOverwrite] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: ThingDef:WaterTowerS
 - 结论说明: Dubs Bad Hygiene Lite 与 Dubs Bad Hygiene 在无依赖关系下重复定义了核心 XML Def（ThingDef:WaterTowerS），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: Dubs Bad Hygiene Lite: D:\Steam\steamapps\workshop\content\294100\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
-  - 证据: Dubs Bad Hygiene: D:\Steam\steamapps\workshop\content\294100\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
+  - 证据: Dubs Bad Hygiene Lite: <工坊内容>\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
+  - 证据: Dubs Bad Hygiene: <工坊内容>\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
 
 ### [DuplicateXmlDefOverwrite] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: ThingDef:WaterWellInlet
 - 结论说明: Dubs Bad Hygiene Lite 与 Dubs Bad Hygiene 在无依赖关系下重复定义了核心 XML Def（ThingDef:WaterWellInlet），后加载者会整块覆盖先加载者
 - 处置建议: 两个无依赖关系的模组全量重定义了同一 Def，属于明确覆盖冲突
-  - 证据: Dubs Bad Hygiene Lite: D:\Steam\steamapps\workshop\content\294100\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
-  - 证据: Dubs Bad Hygiene: D:\Steam\steamapps\workshop\content\294100\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
+  - 证据: Dubs Bad Hygiene Lite: <工坊内容>\2570319432\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
+  - 证据: Dubs Bad Hygiene: <工坊内容>\836308268\1.7\Defs\ThingDefs_Buildings\BuildingsD_WaterManagement.xml
 
 ### [ExplicitIncompatibility] Dubs Bad Hygiene Lite ↔ Dubs Bad Hygiene
 - 冲突目标: dubwise.dubsbadhygiene.lite <-> dubwise.dubsbadhygiene

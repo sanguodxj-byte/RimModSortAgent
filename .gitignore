@@ -4,3 +4,6 @@ obj2/
 artifacts/
 *.user
 AppSettings.json
+.workbuddy/
+.opencode/
+

@@ -25,14 +25,22 @@ public sealed record PlayerConflict(
     IReadOnlyList<PairwiseConflictFinding> Findings,
     bool InvolvesInactiveMod)
 {
-    public string PairLabel => $"{ModAName} ↔ {ModBName}";
+    /// <summary>同一模组自身的问题（例如它自己的 Def 配置错误）不显示成「X ↔ X」。</summary>
+    public string PairLabel => string.Equals(ModAPackageId, ModBPackageId, StringComparison.OrdinalIgnoreCase)
+        ? ModAName
+        : $"{ModAName} ↔ {ModBName}";
 
-    public string ActionSummary => Grade == ConflictGrade.Red ? "会让模组失效" : "需要确认";
+    public string ActionSummary => Grade switch
+    {
+        ConflictGrade.Purple => "作者声明不兼容",
+        ConflictGrade.Red => "会让模组失效",
+        _ => "需要确认"
+    };
 }
 
 /// <summary>
 /// 把评分器的技术发现翻译成玩家能直接理解的冲突清单。
-/// 只保留黄色/红色，且至少一方处于启用状态；同一对模组的同类问题合并为一条。
+/// 只保留黄色/红色/紫色，且至少一方处于启用状态；同一对模组的同类问题合并为一条。
 /// </summary>
 public static class ConflictNarrative
 {
@@ -94,6 +102,7 @@ public static class ConflictNarrative
         var grade = findings.Max(f => f.Grade);
         var severity = grade switch
         {
+            ConflictGrade.Purple => "作者声明不兼容",
             ConflictGrade.Red => "明确冲突",
             ConflictGrade.Yellow => "可能有问题",
             _ => "正常"
@@ -219,7 +228,21 @@ public static class ConflictNarrative
                 $"「{a}」的作者明确声明与「{b}」不兼容",
                 $"「{a}」的 About.xml 中直接声明了 incompatibleWith，这是模组作者给出的确定性结论。",
                 "同时启用时通常会出现红字、功能直接失效，或存档损坏风险。",
-                "只能二选一。若确实要同时使用，需要 Agent 分析源码后定制补丁。"),
+                "在右侧紫色冲突里选择保留哪一方；只选一边会按正常顺序写入配置，两边都保留则进入兼容生成范围。"),
+
+            "BrokenXmlDefReference" => (
+                "引用了对不上的内容",
+                $"「{a}」引用了一份对不上的游戏内容{countHint}",
+                findings[0].Summary,
+                "游戏载入时会打印红字并丢弃这条引用，相关的物品、音效或伤害数值会缺失、不生效。",
+                "调整加载顺序解决不了：要么补上（或启用）定义它的那个模组，要么让 Agent 生成一条 XML 补丁改掉这处引用。"),
+
+            "XmlDefConfigError" => (
+                "内容配置有误",
+                $"「{a}」的一项内容被游戏判定为配置错误{countHint}",
+                findings[0].Summary,
+                "游戏会忽略出错的那部分数据，通常表现为数值不对或抗性失效，一般不会导致崩溃。",
+                "属于该模组自身的数据问题：可以让 Agent 生成 XML 补丁修正，或等作者更新。"),
 
             "MissingDependency" => (
                 "缺少前置模组",
@@ -251,8 +274,12 @@ public static class ConflictNarrative
             .Replace(b, "另一方", StringComparison.Ordinal);
     }
 
-    private static string GradeWord(ConflictGrade grade)
-        => grade == ConflictGrade.Red ? "明确冲突" : "潜在冲突";
+    private static string GradeWord(ConflictGrade grade) => grade switch
+    {
+        ConflictGrade.Purple => "作者声明不兼容",
+        ConflictGrade.Red => "明确冲突",
+        _ => "潜在冲突"
+    };
 
     private static string UiCategoryLabel(string category) => category switch
     {
@@ -266,6 +293,8 @@ public static class ConflictNarrative
         "ExplicitIncompatibility" => "作者声明不兼容",
         "MissingDependency" => "缺少前置模组",
         "CyclicLoadOrderConstraint" => "加载顺序互相矛盾",
+        "BrokenXmlDefReference" => "引用了对不上的内容",
+        "XmlDefConfigError" => "内容配置有误",
         _ => "模组冲突"
     };
 

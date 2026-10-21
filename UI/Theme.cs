@@ -44,6 +44,10 @@ internal static class UiTheme
     public static readonly Color RoseBg = Color.FromArgb(70, 26, 30);
     public static readonly Color RoseText = Color.FromArgb(248, 163, 163);
 
+    public static readonly Color Purple = Color.FromArgb(168, 112, 240);
+    public static readonly Color PurpleBg = Color.FromArgb(45, 30, 68);
+    public static readonly Color PurpleText = Color.FromArgb(210, 178, 255);
+
     public static readonly Color ScrollTrack = Color.FromArgb(24, 28, 36);
     public static readonly Color ScrollThumb = Color.FromArgb(62, 72, 90);
     public static readonly Color ScrollThumbHover = Color.FromArgb(86, 99, 122);
@@ -82,6 +86,7 @@ internal static class UiTheme
             Models.ConflictGrade.Green => (Green, GreenBg, GreenText, "1.绿色"),
             Models.ConflictGrade.Yellow => (Amber, AmberBg, AmberText, "2.黄色"),
             Models.ConflictGrade.Red => (Rose, RoseBg, RoseText, "3.红色"),
+            Models.ConflictGrade.Purple => (Purple, PurpleBg, PurpleText, "4.紫色"),
             _ => (TextSecondary, ElevatedBg, TextPrimary, "未知")
         };
     }
@@ -100,9 +105,11 @@ internal static class UiTheme
             "MultipleTranspilersSameTarget" => "多 Transpiler 叠加",
             "CompatibleHarmonyOverlap" => "Harmony 兼容",
             "AdditiveXmlPatchOverlap" => "XML 追加兼容",
-            "ExplicitIncompatibility" => "显式声明互斥",
+            "ExplicitIncompatibility" => "作者声明不兼容",
             "MissingDependency" => "缺失前置依赖",
             "CyclicLoadOrderConstraint" => "循环排序依赖",
+            "BrokenXmlDefReference" => "XML 引用对不上",
+            "XmlDefConfigError" => "Def 配置错误",
             _ => raw
         };
     }

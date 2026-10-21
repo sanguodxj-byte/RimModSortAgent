@@ -57,6 +57,12 @@ public static class AgentConfigLoader
             "ModSorterAgent",
             "patches");
 
+    public static string DefaultCaseOutputDir =>
+        Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+            "ModSorterAgent",
+            "agent-cases");
+
     private static string? Env(string name)
     {
         var value = Environment.GetEnvironmentVariable(name);

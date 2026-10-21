@@ -65,14 +65,16 @@ public sealed class ModListResolver
 
     public static string DefaultModsConfigPath => ResolveDefaultModsConfigPath();
 
-    public const string DefaultRimWorldInstallDir =
-        @"D:\Steam\steamapps\common\RimWorld";
+    /// <summary>自动检测的 RimWorld 安装目录；未检测到为空，需在设置中指定。</summary>
+    public static string DefaultRimWorldInstallDir { get; } =
+        PathAutoDetector.DetectGameInstallDir() ?? string.Empty;
 
-    public const string DefaultWorkshopDir =
-        @"D:\Steam\steamapps\workshop\content\294100";
+    /// <summary>自动检测的创意工坊内容目录；未检测到为空，需在设置中指定。</summary>
+    public static string DefaultWorkshopDir { get; } =
+        PathAutoDetector.DetectWorkshopContentDir() ?? string.Empty;
 
-    public const string DefaultWorkspaceDir =
-        @"D:\rim mod";
+    /// <summary>本地模组工作区没有通用位置，留空表示不扫描。</summary>
+    public static string DefaultWorkspaceDir => string.Empty;
 
     private static readonly HashSet<string> OfficialPackageIds = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -83,6 +85,39 @@ public sealed class ModListResolver
         "ludeon.rimworld.anomaly",
         "ludeon.rimworld.odyssey"
     };
+
+    /// <summary>
+    /// 官方内容的权威加载次序（Core 最前，DLC 按发布顺序）。
+    /// 官方 DLC 之间只用 forceLoadAfter/forceLoadBefore 表达先后、且不带 modDependencies，
+    /// 因此不能用"依赖数"推断，必须用这份固定事实。
+    /// </summary>
+    private static readonly string[] OfficialLoadOrder =
+    {
+        "ludeon.rimworld",
+        "ludeon.rimworld.royalty",
+        "ludeon.rimworld.ideology",
+        "ludeon.rimworld.biotech",
+        "ludeon.rimworld.anomaly",
+        "ludeon.rimworld.odyssey"
+    };
+
+    /// <summary>
+    /// 官方包在权威加载次序中的位次；非官方包返回 -1。
+    /// </summary>
+    public static int GetOfficialLoadOrderRank(string packageId)
+    {
+        var norm = StripSteamSuffix(NormalizePackageId(packageId));
+        for (var i = 0; i < OfficialLoadOrder.Length; i++)
+        {
+            if (OfficialLoadOrder[i].Equals(norm, StringComparison.OrdinalIgnoreCase))
+                return i;
+        }
+
+        return -1;
+    }
+
+    /// <summary>官方权威加载次序的条目数，用于给未登记在册的官方包兜底排序。</summary>
+    public static int OfficialLoadOrderCount => OfficialLoadOrder.Length;
 
     private static readonly HashSet<string> ExcludedWorkspaceFolders = new(StringComparer.OrdinalIgnoreCase)
     {
@@ -116,34 +151,13 @@ public sealed class ModListResolver
         if (!string.IsNullOrWhiteSpace(configured))
             return configured;
 
-        // 2. LocalLow 标准位置（当前用户 → 任意可用用户档案）
-        const string fallbackPath = @"C:\Users\Administrator\AppData\LocalLow\Ludeon Studios\RimWorld by Ludeon Studios\Config\ModsConfig.xml";
-        if (File.Exists(fallbackPath))
-            return fallbackPath;
+        // 2. 当前用户的 LocalLow 标准位置
+        var detected = PathAutoDetector.DetectModsConfigPath();
+        if (!string.IsNullOrWhiteSpace(detected))
+            return detected;
 
-        try
-        {
-            var userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
-            if (!string.IsNullOrWhiteSpace(userProfile))
-            {
-                var candidate = Path.Combine(
-                    userProfile,
-                    "AppData",
-                    "LocalLow",
-                    "Ludeon Studios",
-                    "RimWorld by Ludeon Studios",
-                    "Config",
-                    "ModsConfig.xml");
-                if (File.Exists(candidate))
-                    return candidate;
-            }
-        }
-        catch
-        {
-            // Ignore environment lookup error
-        }
-
-        return fallbackPath;
+        // 3. 文件尚不存在时仍返回当前用户的标准位置，供界面提示与后续创建使用。
+        return PathAutoDetector.GetStandardModsConfigPath() ?? "ModsConfig.xml";
     }
 
     public (string GameVersion, List<string> RequestedTokens, List<string> KnownExpansions) ParseModsConfigFile(string modsConfigPath)
@@ -625,9 +639,11 @@ public sealed class ModListResolver
                 return workshopHit;
         }
 
+        var installRoot = PathOptions.RimWorldInstallDir;
         var localNonWorkshopHit = _catalog.FirstOrDefault(c =>
             !c.IsWorkshop &&
-            c.RootDirectory.StartsWith(DefaultRimWorldInstallDir, StringComparison.OrdinalIgnoreCase) &&
+            !string.IsNullOrWhiteSpace(installRoot) &&
+            c.RootDirectory.StartsWith(installRoot, StringComparison.OrdinalIgnoreCase) &&
             c.BasePackageId.Equals(stripped, StringComparison.OrdinalIgnoreCase));
         if (localNonWorkshopHit != null)
             return localNonWorkshopHit;

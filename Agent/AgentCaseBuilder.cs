@@ -12,10 +12,6 @@ namespace ModSorterAgent.Agent;
 /// </summary>
 public sealed class AgentCaseBuilder : IDisposable
 {
-    private const int MaxSnippetChars = 7000;
-    private const int MaxXmlChars = 6000;
-    private const int MaxPromptChars = 24000;
-
     private readonly IReadOnlyList<ModDescriptor> _mods;
     private readonly string _gameDir;
     private readonly string[] _searchDirs;
@@ -51,43 +47,52 @@ public sealed class AgentCaseBuilder : IDisposable
         var modA = FindMod(conflict.ModAPackageId);
         var modB = FindMod(conflict.ModBPackageId);
         var samples = new List<AgentCodeSample>();
-        var sources = new List<string>();
+        var targets = conflict.Findings
+            .Select(f => f.TargetSignature)
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        var target = targets.FirstOrDefault() ?? string.Empty;
 
-        var target = conflict.Findings.FirstOrDefault()?.TargetSignature ?? string.Empty;
         var isHarmony = conflict.Category.Contains("Harmony", StringComparison.OrdinalIgnoreCase) ||
                         conflict.Category.Contains("Prefix", StringComparison.OrdinalIgnoreCase) ||
                         conflict.Category.Contains("Transpiler", StringComparison.OrdinalIgnoreCase);
 
         if (isHarmony)
         {
-            AddHarmonySamples(conflict, modA, "A", samples, sources, cancellationToken);
-            AddHarmonySamples(conflict, modB, "B", samples, sources, cancellationToken);
+            AddHarmonySamples(conflict, targets, modA, modB, "A", samples, cancellationToken);
+            AddHarmonySamples(conflict, targets, modB, modA, "B", samples, cancellationToken);
 
-            var targetCode = DecompileTargetMethod(target);
-            if (!string.IsNullOrWhiteSpace(targetCode))
+            var decompiledTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            foreach (var targetSignature in targets)
             {
-                samples.Add(new AgentCodeSample("RimWorld / 目标方法原始实现", ShortMember(target), targetCode!));
-                sources.Add("目标方法源码");
+                if (!decompiledTargets.Add(targetSignature))
+                    continue;
+
+                var targetCode = DecompileTargetMethod(targetSignature);
+                if (string.IsNullOrWhiteSpace(targetCode))
+                    continue;
+
+                samples.Add(new AgentCodeSample(
+                    "RimWorld / 目标方法原始实现",
+                    ShortMember(targetSignature),
+                    targetCode!));
             }
+        }
+        else if (conflict.Category is "ExplicitIncompatibility" or "MissingDependency" or
+                 "CyclicLoadOrderConstraint" or "SoftConstraintCycleDropped")
+        {
+            AddDeclarationSamples(conflict, modA, "A", samples);
+            AddDeclarationSamples(conflict, modB, "B", samples);
         }
         else
         {
-            AddXmlSamples(conflict, modA, "A", samples, sources, cancellationToken);
-            AddXmlSamples(conflict, modB, "B", samples, sources, cancellationToken);
-        }
-
-        if (conflict.Category.Equals("ExplicitIncompatibility", StringComparison.OrdinalIgnoreCase))
-        {
-            AddAboutSample(modA, samples);
-            AddAboutSample(modB, samples);
+            AddXmlSamples(conflict, targets, modA, "A", samples, cancellationToken);
+            AddXmlSamples(conflict, targets, modB, "B", samples, cancellationToken);
         }
 
         var prompt = BuildPrompt(conflict, modA, modB, samples);
-        var memorySources = sources
-            .Concat(samples.Select(s => s.Source))
-            .Where(s => !string.IsNullOrWhiteSpace(s))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToList();
 
         return new AgentCaseFile(
             ConflictKey: conflict.Key,
@@ -107,17 +112,18 @@ public sealed class AgentCaseBuilder : IDisposable
 
     private void AddHarmonySamples(
         PlayerConflict conflict,
+        IReadOnlyList<string> targets,
         ModDescriptor? mod,
+        ModDescriptor? otherMod,
         string side,
         List<AgentCodeSample> samples,
-        List<string> sources,
         CancellationToken cancellationToken)
     {
         if (mod == null || mod.AssemblyPaths.Count == 0)
             return;
 
-        var target = conflict.Findings.FirstOrDefault()?.TargetSignature ?? string.Empty;
-        var targetMethod = ShortMember(target);
+        var targetTokens = BuildTargetTokens(targets);
+        var otherTokens = BuildModTokens(otherMod);
 
         foreach (var assemblyPath in mod.AssemblyPaths)
         {
@@ -128,16 +134,17 @@ public sealed class AgentCaseBuilder : IDisposable
                 continue;
 
             var patches = analysis.Patches
-                .Where(p => MatchesTarget(p, target, targetMethod))
+                .Where(p => MatchesConflict(p, targets, targetTokens, otherTokens))
                 .OrderByDescending(p => p.Behavior.CanSkipOriginal)
                 .ThenByDescending(p => p.PatchKind == "Transpiler")
-                .Take(5)
                 .ToList();
 
-            if (patches.Count == 0)
-                continue;
+            var dynamicSites = analysis.DynamicPatchSites
+                .Where(s => MatchesDynamicSite(s, targets, targetTokens, otherTokens))
+                .ToList();
 
-            sources.Add($"{mod.Name} / {analysis.AssemblyName}（真实补丁代码）");
+            if (patches.Count == 0 && dynamicSites.Count == 0)
+                continue;
 
             foreach (var patch in patches)
             {
@@ -149,49 +156,241 @@ public sealed class AgentCaseBuilder : IDisposable
                 if (patch.Behavior.HasTargetGuardClause) behavior.Append(" · 带条件守卫");
                 if (patch.Behavior.UsesCodeMatcher) behavior.Append(" · 使用 CodeMatcher");
 
-                var code = Trim(patch.Behavior.DecompiledSnippet, MaxSnippetChars);
+                var patchTarget = JoinTarget(patch);
+                if (string.IsNullOrWhiteSpace(patchTarget))
+                    patchTarget = patch.DynamicTargetHints.Count > 0
+                        ? string.Join(" / ", patch.DynamicTargetHints)
+                        : "（动态目标未解析）";
+
+                var code = patch.Behavior.DecompiledSnippet;
                 if (string.IsNullOrWhiteSpace(code))
                     code = "（反编译片段不可用，仅能确认补丁签名）";
 
                 samples.Add(new AgentCodeSample(
                     $"{mod.Name} / {analysis.AssemblyName} / {side} 方",
-                    $"{patch.PatchClassFullName}.{patch.PatchMethodName} [目标 {patch.TargetTypeFullName}.{patch.TargetMethodName}]（{behavior}）",
+                    $"{patch.PatchClassFullName}.{patch.PatchMethodName} [目标 {patchTarget}]（{behavior}）",
+                    code));
+            }
+
+            foreach (var site in dynamicSites)
+            {
+                var hints = site.ReferencedStrings.Count > 0
+                    ? string.Join(" / ", site.ReferencedStrings)
+                    : "（无字符串线索）";
+
+                var code = site.DecompiledSnippet;
+                if (string.IsNullOrWhiteSpace(code))
+                    code = "（动态注册方法反编译片段不可用，仅能确认 Harmony.Patch 调用点）";
+
+                samples.Add(new AgentCodeSample(
+                    $"{mod.Name} / {analysis.AssemblyName} / {side} 方 · 动态注册",
+                    $"{site.CallerTypeFullName}.{site.CallerMethodName} [Harmony.Patch 动态注册 · 引用 {hints}]",
                     code));
             }
         }
     }
 
-    private static bool MatchesTarget(HarmonyPatchRecord patch, string target, string targetMethod)
+    private static string JoinTarget(HarmonyPatchRecord patch)
     {
-        var patchTarget = $"{patch.TargetTypeFullName}.{patch.TargetMethodName}";
-        if (patchTarget.Equals(target, StringComparison.OrdinalIgnoreCase))
+        if (string.IsNullOrWhiteSpace(patch.TargetTypeFullName) ||
+            string.IsNullOrWhiteSpace(patch.TargetMethodName))
+            return string.Empty;
+
+        return $"{patch.TargetTypeFullName}.{patch.TargetMethodName}";
+    }
+
+    private static bool MatchesConflict(
+        HarmonyPatchRecord patch,
+        IReadOnlyList<string> targets,
+        IReadOnlyList<string> targetTokens,
+        IReadOnlyList<string> otherTokens)
+    {
+        var patchTarget = JoinTarget(patch);
+        var patchIdentity = $"{patch.PatchClassFullName}.{patch.PatchMethodName}";
+
+        foreach (var target in targets)
+        {
+            if (patchTarget.Equals(target, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (patchIdentity.Equals(target, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            var shortTarget = ShortMember(target);
+            if (shortTarget.Length > 3 && patchTarget.Contains(shortTarget, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (patchTarget.Length > 3 && target.Contains(patchTarget, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        if (patch.UsesDynamicTargetMethod)
+        {
+            if (ContainsAny(patch.DynamicTargetHints, targetTokens))
+                return true;
+
+            if (ContainsAny(patch.DynamicTargetHints, otherTokens))
+                return true;
+
+            if (targets.Any(t => t.Contains(patch.PatchClassFullName, StringComparison.OrdinalIgnoreCase) &&
+                                 t.Contains(patch.PatchMethodName, StringComparison.OrdinalIgnoreCase)))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static bool MatchesDynamicSite(
+        DynamicHarmonyPatchSite site,
+        IReadOnlyList<string> targets,
+        IReadOnlyList<string> targetTokens,
+        IReadOnlyList<string> otherTokens)
+    {
+        var identity = $"{site.CallerTypeFullName}.{site.CallerMethodName}";
+        foreach (var target in targets)
+        {
+            if (identity.Equals(target, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (target.Length > 3 && identity.Contains(target, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        if (ContainsAny(site.ReferencedStrings, targetTokens))
             return true;
 
-        if (targetMethod.Length > 3 && patchTarget.Contains(targetMethod, StringComparison.OrdinalIgnoreCase))
+        if (ContainsAny(site.ReferencedStrings, otherTokens))
             return true;
+
+        if (ContainsAny(site.ReferencedTypes, targetTokens))
+            return true;
+
+        return false;
+    }
+
+    private static IReadOnlyList<string> BuildTargetTokens(IReadOnlyList<string> targets)
+    {
+        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var target in targets)
+        {
+            if (string.IsNullOrWhiteSpace(target))
+                continue;
+
+            if (target.Length >= 4)
+                tokens.Add(target);
+
+            var shortName = ShortMember(target);
+            if (shortName.Length >= 4)
+                tokens.Add(shortName);
+
+            var lastDot = target.LastIndexOf('.');
+            if (lastDot > 0 && lastDot < target.Length - 1)
+            {
+                var method = target[(lastDot + 1)..];
+                if (method.Length >= 4)
+                    tokens.Add(method);
+
+                var typeName = target[..lastDot];
+                var typeDot = typeName.LastIndexOf('.');
+                var simpleType = typeDot >= 0 ? typeName[(typeDot + 1)..] : typeName;
+                if (simpleType.Length >= 4)
+                    tokens.Add(simpleType);
+            }
+        }
+
+        return tokens.ToList();
+    }
+
+    private static IReadOnlyList<string> BuildModTokens(ModDescriptor? mod)
+    {
+        var tokens = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        if (mod == null)
+            return Array.Empty<string>();
+
+        if (mod.Name.Length >= 4)
+            tokens.Add(mod.Name);
+
+        foreach (var part in mod.PackageId.Split(new[] { '.', '_', '-' }, StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (part.Length >= 4)
+                tokens.Add(part);
+        }
+
+        foreach (var assembly in mod.AssemblyPaths)
+        {
+            var name = Path.GetFileNameWithoutExtension(assembly);
+            if (name.Length >= 4)
+                tokens.Add(name);
+        }
+
+        var folder = Path.GetFileName(mod.RootDirectory.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        if (folder.Length >= 4)
+            tokens.Add(folder);
+
+        return tokens.ToList();
+    }
+
+    private static bool ContainsAny(IReadOnlyList<string> haystacks, IReadOnlyList<string> needles)
+    {
+        foreach (var haystack in haystacks)
+        {
+            if (string.IsNullOrWhiteSpace(haystack))
+                continue;
+
+            foreach (var needle in needles)
+            {
+                if (needle.Length >= 4 && haystack.Contains(needle, StringComparison.OrdinalIgnoreCase))
+                    return true;
+            }
+        }
 
         return false;
     }
 
     private void AddXmlSamples(
         PlayerConflict conflict,
+        IReadOnlyList<string> targets,
         ModDescriptor? mod,
         string side,
         List<AgentCodeSample> samples,
-        List<string> sources,
         CancellationToken cancellationToken)
     {
         if (mod == null)
             return;
 
-        var targets = conflict.Findings.Select(f => f.TargetSignature).ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var patchRecords = mod.XmlPatches
-            .Where(p => targets.Any(t => p.XPath != null && t.Contains(p.XPath, StringComparison.OrdinalIgnoreCase)) ||
-                        targets.Any(t => p.XPath != null && p.XPath.Contains(DefKeyOf(t), StringComparison.OrdinalIgnoreCase)))
-            .Take(6)
+        var defKeys = targets
+            .Where(t => !t.Contains('/') && t.Contains(':'))
+            .Select(ParseDefKey)
+            .Where(k => k != null)
+            .Select(k => k!.Value)
             .ToList();
 
-        if (patchRecords.Count == 0)
+        foreach (var defKey in defKeys)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            var def = mod.XmlDefs.FirstOrDefault(d =>
+                d.DefType.Equals(defKey.DefType, StringComparison.OrdinalIgnoreCase) &&
+                (d.DefName ?? d.NameAttribute ?? string.Empty)
+                .Equals(defKey.DefName, StringComparison.OrdinalIgnoreCase));
+
+            if (def == null)
+                continue;
+
+            var content = ReadXmlDef(def);
+            if (string.IsNullOrWhiteSpace(content))
+                continue;
+
+            samples.Add(new AgentCodeSample(
+                $"{mod.Name} / {side} 方 · {Path.GetFileName(def.SourceFile)}",
+                $"{def.DefType} · {defKey.DefName} · 完整定义",
+                content!));
+        }
+
+        var patchRecords = mod.XmlPatches
+            .Where(p => MatchesXmlPatch(p, targets))
+            .ToList();
+
+        if (patchRecords.Count == 0 && defKeys.Count == 0)
             patchRecords = mod.XmlPatches.Where(p => p.IsDestructive).Take(3).ToList();
 
         foreach (var record in patchRecords)
@@ -201,18 +400,105 @@ public sealed class AgentCaseBuilder : IDisposable
             if (string.IsNullOrWhiteSpace(content))
                 continue;
 
-            sources.Add($"{mod.Name} / XML Patch 原文");
             samples.Add(new AgentCodeSample(
                 $"{mod.Name} / {side} 方 · {Path.GetFileName(record.SourceFile)}",
                 $"{record.OperationClass} · {(record.IsDestructive ? "破坏性操作" : "追加操作")} · xpath={record.XPath}",
-                Trim(content, MaxXmlChars)));
+                content!));
         }
     }
 
-    private static string DefKeyOf(string target)
+    private static bool MatchesXmlPatch(XmlPatchRecord patch, IReadOnlyList<string> targets)
     {
-        var match = System.Text.RegularExpressions.Regex.Match(target, "defName=\"([^\"]+)\"");
-        return match.Success ? match.Groups[1].Value : target;
+        if (string.IsNullOrWhiteSpace(patch.XPath))
+            return false;
+
+        foreach (var target in targets)
+        {
+            if (string.IsNullOrWhiteSpace(target))
+                continue;
+
+            if (patch.XPath.Equals(target, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (patch.XPath.Contains(target, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            if (target.Contains(patch.XPath, StringComparison.OrdinalIgnoreCase))
+                return true;
+
+            var defKey = ParseDefKey(target);
+            if (defKey != null &&
+                patch.XPath.Contains(defKey.Value.DefName, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+
+        return false;
+    }
+
+    private static (string DefType, string DefName)? ParseDefKey(string target)
+    {
+        var colon = target.IndexOf(':');
+        if (colon <= 0 || colon == target.Length - 1)
+            return null;
+
+        var defType = target[..colon].Trim();
+        var defName = target[(colon + 1)..].Trim();
+        if (defType.Length == 0 || defName.Length == 0)
+            return null;
+
+        var at = defName.IndexOf('@');
+        if (at >= 0)
+            defName = defName[(at + 1)..];
+
+        return (defType, defName);
+    }
+
+    private void AddDeclarationSamples(
+        PlayerConflict conflict,
+        ModDescriptor? mod,
+        string side,
+        List<AgentCodeSample> samples)
+    {
+        if (mod == null)
+            return;
+
+        var builder = new StringBuilder();
+        builder.AppendLine($"PackageId: {mod.PackageId}");
+        builder.AppendLine($"Name: {mod.Name}");
+        AppendList(builder, "supportedVersions", mod.SupportedVersions);
+        AppendList(builder, "modDependencies", mod.Dependencies.Select(d => d.PackageId));
+        AppendList(builder, "loadAfter", mod.LoadAfter);
+        AppendList(builder, "loadBefore", mod.LoadBefore);
+        AppendList(builder, "forceLoadAfter", mod.ForceLoadAfter);
+        AppendList(builder, "forceLoadBefore", mod.ForceLoadBefore);
+        AppendList(builder, "incompatibleWith", mod.IncompatibleWith);
+        AppendList(builder, "referencedAssemblies", mod.ReferencedExternalAssemblies);
+
+        var evidence = conflict.Findings
+            .SelectMany(f => f.Evidence)
+            .Where(e => !string.IsNullOrWhiteSpace(e))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (evidence.Count > 0)
+        {
+            builder.AppendLine();
+            builder.AppendLine("冲突证据：");
+            foreach (var line in evidence)
+                builder.AppendLine("- " + line);
+        }
+
+        samples.Add(new AgentCodeSample(
+            $"{mod.Name} / About 声明摘要",
+            $"{side} 方 · 依赖、加载顺序与互斥声明",
+            builder.ToString()));
+        AddAboutSample(mod, samples);
+    }
+
+    private static void AppendList(StringBuilder builder, string name, IEnumerable<string> values)
+    {
+        var list = values.Where(v => !string.IsNullOrWhiteSpace(v)).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        if (list.Count > 0)
+            builder.AppendLine($"{name}: {string.Join(", ", list)}");
     }
 
     private void AddAboutSample(ModDescriptor? mod, List<AgentCodeSample> samples)
@@ -226,7 +512,7 @@ public sealed class AgentCaseBuilder : IDisposable
 
         try
         {
-            var content = Trim(File.ReadAllText(about), 4000);
+            var content = File.ReadAllText(about);
             samples.Add(new AgentCodeSample($"{mod.Name} / About.xml", "作者声明（依赖与互斥）", content));
         }
         catch
@@ -277,10 +563,7 @@ public sealed class AgentCaseBuilder : IDisposable
             EnsureGameDecompiler();
             var memberId = $"M:{typeName}.{methodName}";
             var code = _gameDecompiler!.DecompileEntitySnippet(memberId);
-            if (string.IsNullOrWhiteSpace(code))
-                return null;
-
-            return Trim(code, MaxSnippetChars);
+            return string.IsNullOrWhiteSpace(code) ? null : code;
         }
         catch
         {
@@ -302,22 +585,9 @@ public sealed class AgentCaseBuilder : IDisposable
 
     private string? ReadXmlOperation(string sourceFile, string? xpath)
     {
-        if (!File.Exists(sourceFile))
+        var content = ReadXmlFile(sourceFile);
+        if (content == null)
             return null;
-
-        if (!_xmlFileCache.TryGetValue(sourceFile, out var content))
-        {
-            try
-            {
-                content = File.ReadAllText(sourceFile);
-            }
-            catch
-            {
-                return null;
-            }
-
-            _xmlFileCache[sourceFile] = content;
-        }
 
         if (string.IsNullOrWhiteSpace(xpath))
             return content;
@@ -342,22 +612,86 @@ public sealed class AgentCaseBuilder : IDisposable
         return content;
     }
 
+    private string? ReadXmlDef(XmlDefRecord def)
+    {
+        var content = ReadXmlFile(def.SourceFile);
+        if (content == null)
+            return null;
+
+        try
+        {
+            var doc = XDocument.Parse(content);
+            var element = doc.Descendants()
+                .Where(e => e.Name.LocalName.Equals(def.DefType, StringComparison.OrdinalIgnoreCase))
+                .FirstOrDefault(e =>
+                    string.Equals((string?)e.Element("defName"), def.DefName, StringComparison.OrdinalIgnoreCase) ||
+                    (def.DefName == null && string.Equals((string?)e.Attribute("Name"), def.NameAttribute, StringComparison.OrdinalIgnoreCase)));
+
+            if (element != null)
+                return element.ToString();
+        }
+        catch
+        {
+            // XML 解析失败时回退到整文件片段
+        }
+
+        return content;
+    }
+
+    private string? ReadXmlFile(string sourceFile)
+    {
+        if (!File.Exists(sourceFile))
+            return null;
+
+        if (_xmlFileCache.TryGetValue(sourceFile, out var content))
+            return content;
+
+        try
+        {
+            content = File.ReadAllText(sourceFile);
+        }
+        catch
+        {
+            return null;
+        }
+
+        _xmlFileCache[sourceFile] = content;
+        return content;
+    }
+
     private static string BuildEvidenceSummary(PlayerConflict conflict, List<AgentCodeSample> samples, bool isHarmony)
     {
-        var assemblies = samples.Select(s => s.Source).Where(s => s.Contains(".dll", StringComparison.OrdinalIgnoreCase)).Count();
-        var patchSamples = samples.Count(s => s.Member.Contains("目标", StringComparison.Ordinal) || s.Member.Contains("Prefix", StringComparison.Ordinal) || s.Member.Contains("Transpiler", StringComparison.Ordinal));
-        var xmlSamples = samples.Count(s => s.Member.Contains("xpath=", StringComparison.OrdinalIgnoreCase));
+        var assemblies = samples.Select(s => s.Source)
+            .Where(s => s.Contains("真实补丁代码", StringComparison.Ordinal) ||
+                        s.Contains("动态注册补丁代码", StringComparison.Ordinal))
+            .Count();
+        var patchSamples = samples.Count(s => s.Source.Contains("方", StringComparison.Ordinal) &&
+                                              (s.Member.Contains("目标", StringComparison.Ordinal) ||
+                                               s.Member.Contains("Prefix", StringComparison.Ordinal) ||
+                                               s.Member.Contains("Transpiler", StringComparison.Ordinal) ||
+                                               s.Member.Contains("Harmony.Patch", StringComparison.Ordinal)));
+        var xmlSamples = samples.Count(s =>
+            s.Source.Contains("XML Patch", StringComparison.Ordinal) ||
+            s.Source.Contains("Def 原文", StringComparison.Ordinal) ||
+            s.Source.EndsWith(".xml", StringComparison.OrdinalIgnoreCase) ||
+            s.Member.Contains("xpath=", StringComparison.OrdinalIgnoreCase));
+        var declarationSamples = samples.Count(s => s.Source.Contains("About 声明摘要", StringComparison.Ordinal) ||
+                                                    s.Source.EndsWith("About.xml", StringComparison.OrdinalIgnoreCase));
         var targetSource = samples.Any(s => s.Source.Contains("目标方法", StringComparison.Ordinal));
 
         var parts = new List<string>();
         if (isHarmony)
         {
-            if (patchSamples > 0) parts.Add($"反编译 {patchSamples} 个补丁方法");
-            if (targetSource) parts.Add("目标方法原始实现");
+            if (patchSamples > 0) parts.Add($"反编译 {patchSamples} 个补丁/注册方法");
+            if (targetSource) parts.Add("目标方法完整源码");
+        }
+        else if (declarationSamples > 0)
+        {
+            parts.Add($"读取 {declarationSamples} 份 About 声明");
         }
         else if (xmlSamples > 0)
         {
-            parts.Add($"读取 {xmlSamples} 份 XML Patch 原文");
+            parts.Add($"读取 {xmlSamples} 份 XML 原文");
         }
 
         if (assemblies > 0) parts.Add($"{assemblies} 个程序集");
@@ -372,7 +706,7 @@ public sealed class AgentCaseBuilder : IDisposable
         ModDescriptor? modB,
         IReadOnlyList<AgentCodeSample> samples)
     {
-        var builder = new StringBuilder(MaxPromptChars);
+        var builder = new StringBuilder();
         builder.AppendLine("你是 RimWorld 模组兼容性工程师。请基于下面给出的真实代码证据做核查，不要臆测不存在的代码。");
         builder.AppendLine();
         builder.AppendLine("## 冲突报告");
@@ -381,7 +715,15 @@ public sealed class AgentCaseBuilder : IDisposable
         builder.AppendLine($"- 模组 A：{conflict.ModAName}（{conflict.ModAPackageId}）{(modA == null ? " [未安装]" : $" 路径 {modA.RootDirectory}")}");
         builder.AppendLine($"- 模组 B：{conflict.ModBName}（{conflict.ModBPackageId}）{(modB == null ? " [未安装]" : $" 路径 {modB.RootDirectory}")}");
         builder.AppendLine($"- 目标：{conflict.TargetLabel}");
+        var targetIdentities = conflict.Findings
+            .Select(f => f.TargetSignature)
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+        if (targetIdentities.Count > 0)
+            builder.AppendLine($"- 冲突标识：{string.Join(" | ", targetIdentities)}");
         builder.AppendLine($"- 静态结论：{conflict.What}");
+        builder.AppendLine($"- 证据数量：{samples.Count} 份（均为完整原文，未截断）");
 
         if (conflict.Category is "DuplicateXmlDefOverwrite" or "DestructiveXmlPatchCollision")
         {
@@ -394,14 +736,13 @@ public sealed class AgentCaseBuilder : IDisposable
         builder.AppendLine();
         builder.AppendLine("## 代码证据");
 
-        var budget = MaxPromptChars - builder.Length;
         foreach (var sample in samples)
         {
-            var block = $"### {sample.Source}\n{sample.Member}\n```\n{sample.Code}\n```\n";
-            if (block.Length > budget)
-                break;
-            builder.AppendLine(block);
-            budget -= block.Length;
+            builder.AppendLine($"### {sample.Source}");
+            builder.AppendLine(sample.Member);
+            builder.AppendLine("```");
+            builder.AppendLine(sample.Code);
+            builder.AppendLine("```");
         }
 
         builder.AppendLine("""
@@ -427,6 +768,14 @@ public sealed class AgentCaseBuilder : IDisposable
 2. hidden_risks 最多 5 条，必须是代码里能看到的具体问题。
 3. 如果无法安全自动修复，patch_plan.kind 必须是 manual，并在 summary 里给出人工修复步骤。
 4. 补丁代码必须能在 RimWorld 的 Harmony 3 环境下编译（.NET 10，C# 最新语法可用）。
+5. 上面给出的每个补丁方法、目标方法和 XML 节点都是完整原文；不要声称内容被截断。
+6. 用 Harmony.Patch / Unpatch 动态注册时，补丁类不要加 [HarmonyPatch] 类特性；只有静态声明补丁才用 [HarmonyPatch(typeof(目标类型), nameof(目标方法))]。不要添加占位补丁类或空 Postfix。
+7. 编译工程已引用 Assembly-CSharp、0Harmony、Unity 兼容层，以及本冲突双方模组的 DLL，可以直接使用模组类型；但模组可能缺失或改名，跨模组调用仍应反射访问并处理 null。
+8. 对截断型 Prefix（无条件 return false 跳过原方法），只调整它的 Priority、或把它移除后以低优先级重新注册，都不能让原方法恢复执行，不算修复。要么用新补丁完整复刻双方行为，要么如实给出 manual 并说明必须牺牲哪一方；禁止把这类无效改动写成 harmony。
+9. 补丁必须使用自己唯一的 Harmony ID（如 modsorteragent.compat.bundle），不要复用其他模组的 Harmony ID；需要 Unpatch 其他模组补丁时，必须在 risk_note 中写明会失去哪一方功能。
+10. 调用游戏 API 时必须使用证据中实际出现的签名；不要凭记忆猜测重载或可选参数。无法确定签名时改用反射（AccessTools.Method + Invoke），不要直接调用。
+11. 复刻被跳过的方法时必须逐条照搬它的完整行为：它调用的每个子方法（例如其他模组的 *Compat.TryInsertModes）、读取的每处设置与默认值（例如 Mod.Settings?.defaultBatchSize）都要保留，禁止用硬编码常量替代模组的可配置默认值。确实无法复刻的部分，必须在 risk_note 中点名玩家会失去哪一项功能；证据不足以复刻时给 manual，不要交出静默缩水版补丁。
+12. 抢占型补丁的验收标准是并集：对每一种输入，玩家能看到、能点的功能必须不少于双方原本功能的总和。只复刻其中一方就用高优先级抢占另一方，会让被抢占方的功能凭空消失，属于回归，不算修复。做不到并集就给 manual，并在 summary 里说明必须牺牲哪一方、由玩家如何选择。
 """);
 
         return builder.ToString();
@@ -438,13 +787,6 @@ public sealed class AgentCaseBuilder : IDisposable
             return string.Empty;
         var parts = target.Split('.');
         return parts.Length >= 2 ? $"{parts[^2]}.{parts[^1]}" : target;
-    }
-
-    private static string Trim(string? text, int max)
-    {
-        if (string.IsNullOrEmpty(text))
-            return string.Empty;
-        return text.Length <= max ? text : text[..max] + "\n…（已截断）";
     }
 
     public void Dispose()

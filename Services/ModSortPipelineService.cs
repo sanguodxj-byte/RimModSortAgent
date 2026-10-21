@@ -128,7 +128,10 @@ public sealed class ModSortPipelineService : IModSortPipeline
         cancellationToken.ThrowIfCancellationRequested();
         Report(PipelineStage.GradingConflicts, 4, 0, 1, 80, "正在计算三级冲突定级与依赖约束…");
 
-        var grading = ConflictGrader.AnalyzeAndGrade(fullyAnalyzed, cancellationToken);
+        var grading = ConflictGrader.AnalyzeAndGrade(
+            fullyAnalyzed,
+            cancellationToken,
+            GabsLiveVerifier.DefaultPlayerLogPath);
 
         foreach (var unresolved in unresolvedTokens.Concat(poolUnresolved))
             grading.MissingDependencies.Add($"未能定位模组标识: {unresolved}");
@@ -137,7 +140,7 @@ public sealed class ModSortPipelineService : IModSortPipeline
         var reportMissingDependencies = grading.MissingDependencies;
 
         Report(PipelineStage.GradingConflicts, 4, 1, 1, 84,
-            $"冲突定级完成：红色 {reportFindings.Count(f => f.Grade == ConflictGrade.Red)} 项，黄色 {reportFindings.Count(f => f.Grade == ConflictGrade.Yellow)} 项");
+            $"冲突定级完成：紫色 {reportFindings.Count(f => f.Grade == ConflictGrade.Purple)} 项，红色 {reportFindings.Count(f => f.Grade == ConflictGrade.Red)} 项，黄色 {reportFindings.Count(f => f.Grade == ConflictGrade.Yellow)} 项");
 
         // ── 阶段 5：分层拓扑排序 ────────────────────────────────────────────
         cancellationToken.ThrowIfCancellationRequested();

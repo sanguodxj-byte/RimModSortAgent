@@ -2,13 +2,22 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
-    <TargetFramework>net9.0-windows</TargetFramework>
+    <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>ModSorterAgent</AssemblyName>
     <RootNamespace>ModSorterAgent</RootNamespace>
     <CETCompat>false</CETCompat>
+
+    <Version>1.0.0</Version>
+    <Product>RimWorld 模组排序与冲突分析工作台</Product>
+    <Authors>sanguodxj-byte</Authors>
+    <Copyright>Copyright (c) 2026 sanguodxj-byte</Copyright>
+
+    <!-- 反编译链路（ICSharpCode.Decompiler）依赖反射读取程序集，裁剪后会在运行时缺类型，禁止开启裁剪。 -->
+    <PublishTrimmed>false</PublishTrimmed>
+    <PublishReadyToRun>false</PublishReadyToRun>
   </PropertyGroup>
 
   <ItemGroup>

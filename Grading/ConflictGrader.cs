@@ -66,7 +66,10 @@ public static class ConflictGrader
         }
     }
 
-    public static GradingOutput AnalyzeAndGrade(IReadOnlyList<ModDescriptor> mods, CancellationToken cancellationToken = default)
+    public static GradingOutput AnalyzeAndGrade(
+        IReadOnlyList<ModDescriptor> mods,
+        CancellationToken cancellationToken = default,
+        string? playerLogPath = null)
     {
         var findings = new List<PairwiseConflictFinding>();
         var edges = new List<OrderingEdge>();
@@ -77,10 +80,119 @@ public static class ConflictGrader
         AnalyzeHarmonyCollisions(mods, index, findings, edges, cancellationToken);
         AnalyzeXmlCollisions(mods, findings, edges, cancellationToken);
 
+        if (!string.IsNullOrWhiteSpace(playerLogPath))
+            AnalyzeXmlDefErrors(mods, playerLogPath!, findings, cancellationToken);
+
         return new GradingOutput(
             DeduplicateFindings(findings),
             DeduplicateEdges(edges),
             missingDeps.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+    }
+
+    // ───────────────────── 四、游戏日志里的 Def 错误 ─────────────────────
+    // 判据来自游戏自己的输出，静态 XML 只负责回答"这条红字该算在谁头上"。
+
+    private static void AnalyzeXmlDefErrors(
+        IReadOnlyList<ModDescriptor> mods,
+        string playerLogPath,
+        List<PairwiseConflictFinding> findings,
+        CancellationToken cancellationToken)
+    {
+        var logErrors = XmlCrossReferenceAnalyzer.ParseGameLogFile(playerLogPath);
+        if (logErrors.Count == 0)
+            return;
+
+        foreach (var issue in XmlCrossReferenceAnalyzer.Analyze(mods, logErrors, cancellationToken))
+        {
+            // 归因不到具体模组时不造一条假配对，日志原文仍保留在报告的日志核验段里
+            if (issue.ReferencingPackageId.Length == 0)
+                continue;
+
+            var hasOtherDefiner = !string.IsNullOrWhiteSpace(issue.DefiningPackageId) &&
+                                  !string.Equals(issue.DefiningPackageId, issue.ReferencingPackageId, StringComparison.OrdinalIgnoreCase);
+
+            findings.Add(new PairwiseConflictFinding(
+                ModAPackageId: issue.ReferencingPackageId,
+                ModAName: issue.ReferencingModName,
+                ModBPackageId: hasOtherDefiner ? issue.DefiningPackageId! : issue.ReferencingPackageId,
+                ModBName: hasOtherDefiner ? issue.DefiningModName! : issue.ReferencingModName,
+                Grade: GradeXmlDefIssue(issue.Kind),
+                Category: issue.Kind == XmlDefIssueKind.ConfigError ? "XmlDefConfigError" : "BrokenXmlDefReference",
+                TargetSignature: BuildXmlDefTarget(issue),
+                Summary: SummarizeXmlDefIssue(issue, hasOtherDefiner),
+                Evidence: BuildXmlDefEvidence(issue, hasOtherDefiner),
+                RecommendedBeforePackageId: null,
+                RecommendedAfterPackageId: null,
+                RecommendationReason: "调整加载顺序解决不了这类问题，需要修 XML 引用或增删模组"));
+        }
+    }
+
+    private static ConflictGrade GradeXmlDefIssue(XmlDefIssueKind kind) => kind switch
+    {
+        XmlDefIssueKind.TypeMismatch => ConflictGrade.Red,
+        XmlDefIssueKind.NotDefined => ConflictGrade.Red,
+        _ => ConflictGrade.Yellow
+    };
+
+    private static string SummarizeXmlDefIssue(XmlDefReferenceIssue issue, bool hasOtherDefiner)
+    {
+        var actual = issue.ActualDefTypes.Count > 0 ? string.Join("/", issue.ActualDefTypes) : "未知类型";
+
+        return issue.Kind switch
+        {
+            XmlDefIssueKind.TypeMismatch =>
+                $"{issue.ReferencingModName} 把「{issue.ReferencedName}」当 {issue.ExpectedDefType} 引用，" +
+                $"但它实际是 {actual}{(hasOtherDefiner ? $"（由 {issue.DefiningModName} 定义）" : string.Empty)}；游戏载入时报红字并丢弃这条引用",
+
+            XmlDefIssueKind.NotDefined =>
+                $"{issue.ReferencingModName} 引用的「{issue.ReferencedName}」在当前启用清单里没有任何模组定义，游戏报红字并忽略它",
+
+            XmlDefIssueKind.NotEnabled =>
+                $"{issue.ReferencingModName} 引用的「{issue.ReferencedName}」只由未启用的 {issue.DefiningModName} 定义；启用它，或让引用方不再依赖它",
+
+            XmlDefIssueKind.StrayWhitespace =>
+                $"{issue.ReferencingModName} 引用「{issue.ReferencedName}」时值里带了多余空白（原文「{issue.RawReferencedValue}」），" +
+                "游戏不裁剪空白因此解析失败，对应内容会缺失",
+
+            XmlDefIssueKind.DefinedButUnresolved =>
+                $"游戏没能解析到「{issue.ReferencedName}」，但 {issue.DefiningModName ?? issue.ReferencingModName} 的文件里确实定义了它；" +
+                "通常是版本文件夹没被载入、重名被拒或该 XML 解析失败",
+
+            XmlDefIssueKind.ConfigError =>
+                $"{issue.ReferencingModName} 的 Def「{issue.ReferencedName}」被游戏判定为配置错误" +
+                (string.IsNullOrWhiteSpace(issue.Detail) ? string.Empty : $"：{issue.Detail}"),
+
+            _ => $"{issue.ReferencingModName} 的「{issue.ReferencedName}」引用有问题"
+        };
+    }
+
+    private static IReadOnlyList<string> BuildXmlDefEvidence(XmlDefReferenceIssue issue, bool hasOtherDefiner)
+    {
+        var evidence = new List<string>
+        {
+            "游戏日志：" + issue.RawLogLine,
+            $"{issue.ReferencingModName}：{issue.SourceFile}"
+        };
+
+        if (hasOtherDefiner)
+        {
+            var actual = issue.ActualDefTypes.Count > 0 ? string.Join("/", issue.ActualDefTypes) : "未知类型";
+            evidence.Add($"{issue.DefiningModName} 把「{issue.ReferencedName}」定义为 {actual}");
+        }
+
+        return evidence;
+    }
+
+    /// <summary>
+    /// 取证侧按 "DefType:DefName" 去模组 XML 里捞原文，所以优先给出引用点所在的那个 Def；
+    /// 补丁文件里的引用没有归属 Def，退回引用字段本身。
+    /// </summary>
+    private static string BuildXmlDefTarget(XmlDefReferenceIssue issue)
+    {
+        if (!string.IsNullOrWhiteSpace(issue.EnclosingDefName) && !string.IsNullOrWhiteSpace(issue.EnclosingDefType))
+            return $"{issue.EnclosingDefType}:{issue.EnclosingDefName}";
+
+        return $"{issue.ElementName}:{issue.ReferencedName}";
     }
 
     private static ModIndex BuildIndex(IReadOnlyList<ModDescriptor> mods)
@@ -172,7 +284,7 @@ public static class ConflictGrader
                     ModAName: mod.Name,
                     ModBPackageId: target.PackageId,
                     ModBName: target.Name,
-                    Grade: ConflictGrade.Red,
+                    Grade: ConflictGrade.Purple,
                     Category: "ExplicitIncompatibility",
                     TargetSignature: $"{mod.PackageId} <-> {target.PackageId}",
                     Summary: $"{mod.Name} 在 About.xml 中显式声明与 {target.Name} 不兼容",
@@ -188,8 +300,7 @@ public static class ConflictGrader
                 if (target == null || IsSelf(target, mod))
                     continue;
 
-                // 与底座相关的先后声明不参与排序：底座由分层保证在最前，这类声明既过时又互相矛盾
-                if (IsBaseModule(mod) || IsBaseModule(target))
+                if (IsContradictoryBaseDeclaration(mod, target, loadsBefore: false))
                     continue;
 
                 edges.Add(new OrderingEdge(
@@ -201,16 +312,13 @@ public static class ConflictGrader
                     Reason: $"{mod.Name} 声明 loadAfter {target.Name}"));
             }
 
-            // loadBefore / forceLoadBefore 与 loadAfter 对称参与排序（2026-10-20 补回）。
-            // 仍然跳过与底座相关的声明：Prepatcher 一边依赖 Harmony 一边声明 loadBefore Harmony，
-            // 这类过时/自相矛盾的底座声明若当作硬约束会凭空造环。社区模组之间的声明是作者意图，正常生效。
             foreach (var beforeId in mod.LoadBefore.Concat(mod.ForceLoadBefore))
             {
                 var target = index.Resolve(beforeId);
                 if (target == null || IsSelf(target, mod))
                     continue;
 
-                if (IsBaseModule(mod) || IsBaseModule(target))
+                if (IsContradictoryBaseDeclaration(mod, target, loadsBefore: true))
                     continue;
 
                 edges.Add(new OrderingEdge(
@@ -1124,13 +1232,60 @@ public static class ConflictGrader
 
     /// <summary>
     /// 是否为"底座"（官方内容或 Harmony 运行时）。
-    /// 与底座之间的 loadBefore/loadAfter 只当倾向处理：这类声明在社区模组里普遍过时或自相矛盾
-    /// （如 Prepatcher 一边依赖 Harmony 一边声明 loadBefore Harmony），当作硬约束会凭空造出"与 Core 冲突"。
     /// </summary>
     private static bool IsBaseModule(ModDescriptor mod) =>
         mod.IsOfficialCoreOrDlc ||
         mod.AssemblyPaths.Any(path =>
             Path.GetFileName(path).Equals("0Harmony.dll", StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// 是否为"自相矛盾的底座先后声明"——只有这种声明才该被丢弃。
+    ///
+    /// 底座的先后声明绝大多数是<b>权威顺序</b>，必须生效：官方 DLC 之间只用 forceLoadAfter/forceLoadBefore
+    /// 表达先后（Core → Royalty → Ideology → Biotech → Anomaly → Odyssey），Harmony 声明 loadBefore Core。
+    /// 把这类声明整类丢弃会让 DLC 链彻底失效，乱序输入下甚至能把 Core 排到最后、游戏无法启动。
+    ///
+    /// 真正该丢的只有一种：模组一边依赖对方、一边要求自己排在对方之前（Prepatcher 依赖 Harmony
+    /// 却声明 loadBefore Harmony）。这种声明若生效会凭空造环，才需要跳过。
+    /// </summary>
+    private static bool IsContradictoryBaseDeclaration(ModDescriptor mod, ModDescriptor target, bool loadsBefore)
+    {
+        // 底座之间的声明是官方权威顺序，一律保留。
+        if (IsBaseModule(mod) && IsBaseModule(target))
+            return false;
+
+        var modDependsOnTarget = DependsOn(mod, target);
+        var targetDependsOnMod = DependsOn(target, mod);
+
+        if (loadsBefore)
+        {
+            // 要求自己先于对方，却依赖对方（或已声明 loadAfter 对方）→ 矛盾
+            return modDependsOnTarget || DeclaresOrder(mod, target, loadAfter: true);
+        }
+
+        // 要求自己后于对方，却反过来被对方依赖（或已声明 loadBefore 对方）→ 矛盾
+        return targetDependsOnMod || DeclaresOrder(mod, target, loadAfter: false);
+    }
+
+    private static bool DependsOn(ModDescriptor mod, ModDescriptor target) =>
+        mod.Dependencies.Any(d => IsSameId(d.PackageId, target.PackageId));
+
+    private static bool DeclaresOrder(ModDescriptor mod, ModDescriptor target, bool loadAfter)
+    {
+        var ids = loadAfter
+            ? mod.LoadAfter.Concat(mod.ForceLoadAfter)
+            : mod.LoadBefore.Concat(mod.ForceLoadBefore);
+
+        return ids.Any(id => IsSameId(id, target.PackageId));
+    }
+
+    private static bool IsSameId(string left, string right)
+    {
+        var a = ModListResolver.NormalizePackageId(left);
+        var b = ModListResolver.NormalizePackageId(right);
+        return a.Equals(b, StringComparison.OrdinalIgnoreCase) ||
+               ModListResolver.StripSteamSuffix(a).Equals(ModListResolver.StripSteamSuffix(b), StringComparison.OrdinalIgnoreCase);
+    }
 
     /// <summary>
     /// 判断 literal 中是否出现作为完整词的 assemblyName：

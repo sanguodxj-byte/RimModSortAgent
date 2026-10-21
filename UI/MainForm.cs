@@ -19,6 +19,7 @@ public sealed class MainForm : Form
     private enum ModQuickFilter
     {
         All,
+        Purple,
         Red,
         Yellow,
         Green,
@@ -37,6 +38,7 @@ public sealed class MainForm : Form
     private readonly SearchBox _modSearch = new("搜索模组名称 / PackageId", 220);
 
     private readonly FilterChip _chipAll = new("全部", UiTheme.Accent);
+    private readonly FilterChip _chipPurple = new("4.紫色", UiTheme.Purple);
     private readonly FilterChip _chipRed = new("3.红色", UiTheme.Rose);
     private readonly FilterChip _chipYellow = new("2.黄色", UiTheme.Amber);
     private readonly FilterChip _chipGreen = new("1.绿色", UiTheme.Green);
@@ -62,24 +64,23 @@ public sealed class MainForm : Form
     private readonly SectionCard _modCard = new("推荐加载顺序", "尚未分析");
     private readonly SectionCard _detailCard = new("冲突详情", "未选择");
 
-    private readonly ModernButton _btnNextConflict = new("下一项冲突", ButtonVariant.Ghost);
     private readonly ModernButton _btnDeepCheck = new("深度核查", ButtonVariant.Secondary);
-    private readonly ModernButton _btnBuildPatch = new("生成兼容补丁", ButtonVariant.Primary);
-    private readonly ModernButton _btnInstallPatch = new("安装补丁", ButtonVariant.Secondary);
-    private readonly ModernButton _btnOpenPatch = new("打开补丁", ButtonVariant.Ghost);
-    private readonly FilterChip _chipTech = new("技术细节", UiTheme.TextMuted);
+    private readonly ModernButton _btnBuildPatch = new("兼容生成", ButtonVariant.Primary);
+
+    private readonly PurpleChoicePanel _purpleChoicePanel = new();
+    private readonly Dictionary<string, PurpleChoice> _purpleChoices = new(StringComparer.OrdinalIgnoreCase);
+
+    private readonly HashSet<string> _activePackageIdSet = new(StringComparer.OrdinalIgnoreCase);
 
     private IReadOnlyList<PlayerConflict> _playerConflicts = Array.Empty<PlayerConflict>();
     private readonly Dictionary<string, AgentReport> _agentReports = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, CompatPatchResult> _patches = new(StringComparer.OrdinalIgnoreCase);
-    private readonly Dictionary<string, string> _installed = new(StringComparer.OrdinalIgnoreCase);
+    private readonly HashSet<string> _bundledConflictKeys = new(StringComparer.OrdinalIgnoreCase);
+    private CompatPatchResult? _patchBundle;
+    private string? _bundleInstalledPath;
     private readonly HashSet<string> _checkingKeys = new(StringComparer.OrdinalIgnoreCase);
 
     private AgentInvestigator? _investigator;
     private List<PlayerConflict> _modConflicts = new();
-    private int _conflictCursor;
-    private PlayerConflict? _activeConflict;
-    private bool _techDetails;
     private bool _agentBusy;
     private bool _includeWorkshopFromCli;
     private CancellationTokenSource? _agentCts;
@@ -87,6 +88,7 @@ public sealed class MainForm : Form
 
     private readonly Label _statusLabel = new();
     private readonly WindowChromeButton _btnMaximize = new(WindowChromeButton.WindowControlKind.Maximize);
+    private readonly ToolTip _chromeTips = new() { InitialDelay = 350, ReshowDelay = 100, AutoPopDelay = 6000 };
 
     private CancellationTokenSource? _cts;
     private PipelineResult? _lastResult;
@@ -171,7 +173,7 @@ public sealed class MainForm : Form
 
         _inspector.ShowDocument(null);
         _modList.EmptyText = "尚未加载模组列表";
-        _modList.EmptyHint = "点击「导入列表」导入当前配置、本地模组或工坊订阅，按 F5 开始分析";
+        _modList.EmptyHint = string.Empty;
     }
 
     private Control BuildHeader()
@@ -195,17 +197,52 @@ public sealed class MainForm : Form
             var g = e.Graphics;
             g.SmoothingMode = SmoothingMode.AntiAlias;
 
-            using (var mark = new SolidBrush(UiTheme.Accent))
-                g.FillEllipse(mark, UiTheme.Scale(titleBar, 14), UiTheme.Scale(titleBar, 14),
-                    UiTheme.Scale(titleBar, 10), UiTheme.Scale(titleBar, 10));
+            var markRect = new Rectangle(UiTheme.Scale(titleBar, 14), UiTheme.Scale(titleBar, 9),
+                UiTheme.Scale(titleBar, 23), UiTheme.Scale(titleBar, 23));
+            using (var markPath = UiTheme.RoundedRect(markRect, UiTheme.Scale(titleBar, 7)))
+            using (var markBrush = new LinearGradientBrush(
+                       markRect, UiTheme.Accent, Color.FromArgb(104, 96, 224),
+                       LinearGradientMode.ForwardDiagonal))
+            {
+                g.FillPath(markBrush, markPath);
+            }
 
+            using (var glyphPen = new Pen(Color.FromArgb(245, 249, 255), 1.4f)
+                   {
+                       StartCap = LineCap.Round,
+                       EndCap = LineCap.Round
+                   })
+            {
+                var gx = markRect.X + UiTheme.Scale(titleBar, 5);
+                for (var i = 0; i < 3; i++)
+                {
+                    var y = markRect.Y + UiTheme.Scale(titleBar, 7) + i * UiTheme.Scale(titleBar, 5);
+                    var width = UiTheme.Scale(titleBar, 13 - i * 3);
+                    g.DrawLine(glyphPen, gx, y, gx + width, y);
+                }
+            }
+
+            var titleLeft = UiTheme.Scale(titleBar, 46);
+            var titleWidth = UiTheme.MeasureWidth("RimWorld ModSorterAgent", UiTheme.TitleFont);
             UiTheme.DrawText(g, "RimWorld ModSorterAgent", UiTheme.TitleFont,
-                new Rectangle(UiTheme.Scale(titleBar, 32), 0, UiTheme.Scale(titleBar, 260), titleBar.Height),
+                new Rectangle(titleLeft, 0, titleWidth + UiTheme.Scale(titleBar, 8), titleBar.Height),
                 UiTheme.TextPrimary);
 
+            var dividerX = titleLeft + titleWidth + UiTheme.Scale(titleBar, 12);
+            using (var divider = new Pen(UiTheme.BorderStrong, 1f))
+                g.DrawLine(divider, dividerX, UiTheme.Scale(titleBar, 13),
+                    dividerX, titleBar.Height - UiTheme.Scale(titleBar, 13));
+
+            var subtitleLeft = dividerX + UiTheme.Scale(titleBar, 11);
+            var subtitleWidth = Math.Max(0, titleBar.Width - UiTheme.Scale(titleBar, 210) - subtitleLeft);
             UiTheme.DrawText(g, "静态代码冲突分级 · 分层拓扑排序", UiTheme.SmallFont,
-                new Rectangle(UiTheme.Scale(titleBar, 238), 0, UiTheme.Scale(titleBar, 260), titleBar.Height),
-                UiTheme.TextMuted);
+                new Rectangle(subtitleLeft, 0, subtitleWidth, titleBar.Height),
+                UiTheme.TextMuted,
+                TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
+
+            using (var edge = new Pen(UiTheme.BorderSubtle, 1f))
+                g.DrawLine(edge, titleBar.Width - UiTheme.Scale(titleBar, 188), UiTheme.Scale(titleBar, 11),
+                    titleBar.Width - UiTheme.Scale(titleBar, 188), titleBar.Height - UiTheme.Scale(titleBar, 11));
 
             using var line = new Pen(UiTheme.BorderSubtle, 1f);
             g.DrawLine(line, 0, titleBar.Height - 1, titleBar.Width, titleBar.Height - 1);
@@ -225,24 +262,28 @@ public sealed class MainForm : Form
         var windowButtons = new FlowLayoutPanel
         {
             Dock = DockStyle.Right,
-            Width = 168,
+            Width = 172,
             FlowDirection = FlowDirection.LeftToRight,
             WrapContents = false,
-            BackColor = Color.Transparent,
-            Padding = new Padding(0, 5, 6, 0)
+            BackColor = UiTheme.TitleBarBg,
+            Padding = new Padding(0, 5, 4, 0)
         };
 
         var btnSettings = new WindowChromeButton(WindowChromeButton.WindowControlKind.Settings);
         btnSettings.Click += (_, _) => ShowSettingsDialog();
 
         var btnMinimize = new WindowChromeButton(WindowChromeButton.WindowControlKind.Minimize);
-        _btnMaximize.Width = 40;
 
         var btnClose = new WindowChromeButton(WindowChromeButton.WindowControlKind.Close);
 
         btnMinimize.Click += (_, _) => WindowState = FormWindowState.Minimized;
         _btnMaximize.Click += (_, _) => ToggleMaximize();
         btnClose.Click += (_, _) => Close();
+
+        _chromeTips.SetToolTip(btnSettings, "设置 (Ctrl+,)");
+        _chromeTips.SetToolTip(btnMinimize, "最小化");
+        _chromeTips.SetToolTip(btnClose, "关闭");
+        UpdateWindowButtonTips();
 
         windowButtons.Controls.Add(btnSettings);
         windowButtons.Controls.Add(btnMinimize);
@@ -276,6 +317,18 @@ public sealed class MainForm : Form
         _btnSortLists.Margin = new Padding(0, 0, 10, 0);
         rightFlow.Controls.Add(_btnSortLists);
 
+        var commandDivider = new Panel
+        {
+            Width = 1,
+            Height = 20,
+            BackColor = UiTheme.BorderStrong,
+            Margin = new Padding(6, 5, 12, 0)
+        };
+        rightFlow.Controls.Add(commandDivider);
+
+        _chromeTips.SetToolTip(_btnLaunchGame, "启动 RimWorld（启动前自动同步激活的排序）");
+        _chromeTips.SetToolTip(_btnSortLists, "切换、保存或删除排序列表");
+
         var leftFlow = new FlowLayoutPanel
         {
             Dock = DockStyle.Fill,
@@ -286,7 +339,7 @@ public sealed class MainForm : Form
             Padding = new Padding(0)
         };
 
-        foreach (var button in new[] { _btnAnalyze, _btnStop, _btnImport, _btnApply, _btnExport })
+        foreach (var button in new[] { _btnAnalyze, _btnStop, _btnDeepCheck, _btnBuildPatch, _btnImport, _btnExport, _btnApply })
         {
             button.Height = 30;
             button.Margin = new Padding(0, 0, 6, 0);
@@ -295,8 +348,13 @@ public sealed class MainForm : Form
 
         _btnAnalyze.LeadingGlyph = "▶";
         _btnStop.LeadingGlyph = "■";
-        _btnApply.LeadingGlyph = "✓";
+        _btnDeepCheck.LeadingGlyph = "◎";
+        _btnBuildPatch.LeadingGlyph = "◈";
+        _btnApply.LeadingGlyph = "◆";
+        _chromeTips.SetToolTip(_btnDeepCheck, "对全部生效冲突逐项做模型深度核查，不只当前模组");
+        _chromeTips.SetToolTip(_btnBuildPatch, "对全部生效冲突统一复核，生成一个合并兼容补丁包");
         _btnLaunchGame.LeadingGlyph = "▶";
+        _btnLaunchGame.LeadingGlyphColor = UiTheme.Green;
 
         commandBar.Controls.Add(leftFlow);
         commandBar.Controls.Add(rightFlow);
@@ -333,71 +391,15 @@ public sealed class MainForm : Form
         outer.Panel1.Controls.Add(_modCard);
 
         _detailCard.Dock = DockStyle.Fill;
+
+        _inspector.Dock = DockStyle.Fill;
         _detailCard.Body.Controls.Add(_inspector);
-        _detailCard.Body.Controls.Add(BuildDetailActionBar());
         outer.Panel2.Controls.Add(_detailCard);
 
         outer.Resize += (_, _) => ApplySplitterDistances(outer, force: false);
         Shown += (_, _) => ApplySplitterDistances(outer, force: true);
 
         return outer;
-    }
-
-    /// <summary>
-    /// 详情操作栏：核查与补丁动作只作用于"当前查看的冲突"，
-    /// 避免玩家在多个冲突之间切换时误把补丁用到别的模组上。
-    /// </summary>
-    private Control BuildDetailActionBar()
-    {
-        var bar = new Panel
-        {
-            Dock = DockStyle.Top,
-            Height = 46,
-            BackColor = UiTheme.SurfaceBg,
-            Padding = new Padding(10, 8, 10, 6)
-        };
-
-        bar.Paint += (_, e) =>
-        {
-            using var pen = new Pen(UiTheme.BorderSubtle, 1f);
-            e.Graphics.DrawLine(pen, 0, bar.Height - 1, bar.Width, bar.Height - 1);
-        };
-
-        var left = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Fill,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            BackColor = Color.Transparent,
-            Margin = new Padding(0),
-            Padding = new Padding(0)
-        };
-
-        foreach (var button in new[] { _btnNextConflict, _btnDeepCheck, _btnBuildPatch, _btnInstallPatch, _btnOpenPatch })
-        {
-            button.Height = 28;
-            button.Font = UiTheme.SmallFont;
-            button.Margin = new Padding(0, 0, 6, 0);
-            left.Controls.Add(button);
-        }
-
-        bar.Controls.Add(left);
-
-        _chipTech.Height = 26;
-        _chipTech.Anchor = AnchorStyles.Top | AnchorStyles.Right;
-        bar.Controls.Add(_chipTech);
-
-        void PlaceChip()
-        {
-            _chipTech.Location = new Point(
-                Math.Max(0, bar.ClientSize.Width - _chipTech.Width - 12),
-                Math.Max(0, (bar.ClientSize.Height - _chipTech.Height) / 2));
-        }
-
-        bar.Resize += (_, _) => PlaceChip();
-        PlaceChip();
-
-        return bar;
     }
 
     private void ApplySplitterDistances(SplitContainer outer, bool force)
@@ -444,7 +446,7 @@ public sealed class MainForm : Form
         _modSearch.Margin = new Padding(0, 0, 8, 0);
         flow.Controls.Add(_modSearch);
 
-        foreach (var chip in new[] { _chipAll, _chipRed, _chipYellow, _chipGreen, _chipInactive })
+        foreach (var chip in new[] { _chipAll, _chipPurple, _chipRed, _chipYellow, _chipGreen, _chipInactive })
         {
             chip.Height = 26;
             chip.Margin = new Padding(0, 0, 6, 0);
@@ -467,6 +469,8 @@ public sealed class MainForm : Form
             new UiColumn("补丁", 7f, 56, true));
 
         _modCard.Body.Controls.Add(_modList);
+        _purpleChoicePanel.Dock = DockStyle.Top;
+        _modCard.Body.Controls.Add(_purpleChoicePanel);
         _modCard.Body.Controls.Add(toolbar);
     }
 
@@ -488,18 +492,6 @@ public sealed class MainForm : Form
         _statusLabel.Font = UiTheme.SmallFont;
         _statusLabel.BackColor = Color.Transparent;
 
-        var shortcut = new Label
-        {
-            Text = "F5 分析　Esc 中止　Ctrl+O 导入　Ctrl+R 读取配置　Ctrl+F 搜索　Ctrl+Enter 写入配置",
-            Dock = DockStyle.Fill,
-            TextAlign = ContentAlignment.MiddleRight,
-            Padding = new Padding(0, 0, 14, 0),
-            ForeColor = UiTheme.TextMuted,
-            Font = UiTheme.SmallFont,
-            BackColor = Color.Transparent
-        };
-
-        bar.Controls.Add(shortcut);
         bar.Controls.Add(_statusLabel);
 
         bar.Paint += (_, e) =>
@@ -518,13 +510,18 @@ public sealed class MainForm : Form
         BuildMenus();
 
         _btnAnalyze.Click += async (_, _) => await RunAnalysisAsync(false);
-        _btnStop.Click += (_, _) => _cts?.Cancel();
+        _btnStop.Click += (_, _) =>
+        {
+            _cts?.Cancel();
+            _agentCts?.Cancel();
+        };
         _btnApply.Click += (_, _) => ApplyToGameConfig();
         _btnLaunchGame.Click += (_, _) => LaunchGame();
 
         _modSearch.SearchTextChanged += (_, _) => RefreshModList();
 
         _chipAll.CheckedChanged += (_, _) => OnModFilterChipClicked(ModQuickFilter.All);
+        _chipPurple.CheckedChanged += (_, _) => OnModFilterChipClicked(ModQuickFilter.Purple);
         _chipRed.CheckedChanged += (_, _) => OnModFilterChipClicked(ModQuickFilter.Red);
         _chipYellow.CheckedChanged += (_, _) => OnModFilterChipClicked(ModQuickFilter.Yellow);
         _chipGreen.CheckedChanged += (_, _) => OnModFilterChipClicked(ModQuickFilter.Green);
@@ -535,16 +532,9 @@ public sealed class MainForm : Form
 
         _kpi.CardClicked += (_, card) => OnKpiClicked(card);
 
-        _btnNextConflict.Click += (_, _) => ShowNextConflict();
         _btnDeepCheck.Click += async (_, _) => await DeepCheckAsync();
         _btnBuildPatch.Click += async (_, _) => await BuildPatchAsync();
-        _btnInstallPatch.Click += (_, _) => InstallPatchWithConfirm();
-        _btnOpenPatch.Click += (_, _) => OpenPatchFolder();
-        _chipTech.CheckedChanged += (_, _) =>
-        {
-            _techDetails = _chipTech.Checked;
-            UpdateDetailForMod();
-        };
+        _purpleChoicePanel.ChoiceChanged += (_, e) => OnPurpleChoiceChanged(e);
 
         KeyDown += OnFormKeyDown;
 
@@ -590,6 +580,8 @@ public sealed class MainForm : Form
 
             _investigator?.Dispose();
             _investigator = null;
+
+            _chromeTips.Dispose();
         };
 
         UpdateCommandStates();
@@ -608,7 +600,7 @@ public sealed class MainForm : Form
         using var dialog = new SettingsDialog();
         if (dialog.ShowDialog(this) != DialogResult.OK)
         {
-            SetStatus("已取消路径设置");
+            SetStatus("已关闭设置");
             return;
         }
 
@@ -780,14 +772,11 @@ public sealed class MainForm : Form
     {
         if (_lastResult == null)
         {
-            SetStatus("请先执行分析，再保存排序列表");
+            SetStatus("尚未分析，无法保存排序列表");
             return;
         }
 
-        var activeIds = _lastResult.Report.SortedMods
-            .Where(m => m.IsActive)
-            .Select(m => m.PackageId)
-            .ToList();
+        var activeIds = GetEffectiveActivePackageIds();
         if (activeIds.Count == 0)
         {
             SetStatus("当前分析没有启用模组，未保存排序");
@@ -829,10 +818,7 @@ public sealed class MainForm : Form
         if (_lastResult == null)
             return false;
 
-        var activeIds = _lastResult.Report.SortedMods
-            .Where(m => m.IsActive)
-            .Select(m => m.PackageId)
-            .ToList();
+        var activeIds = GetEffectiveActivePackageIds();
         if (activeIds.Count == 0)
             return false;
 
@@ -950,6 +936,14 @@ public sealed class MainForm : Form
 
     private void OnFormKeyDown(object? sender, KeyEventArgs e)
     {
+        // Agent 复核/补丁生成期间禁止换列表或改设置，避免复盘到一半状态被清空。
+        if (_agentBusy && e.Control &&
+            e.KeyCode is Keys.O or Keys.R or Keys.L or Keys.W or Keys.Oemcomma)
+        {
+            e.Handled = true;
+            return;
+        }
+
         if (e.Control && e.KeyCode == Keys.S)
         {
             SaveCurrentResultAsProfile();
@@ -999,10 +993,17 @@ public sealed class MainForm : Form
             return;
         }
 
+        if (e.Control && e.KeyCode == Keys.Oemcomma)
+        {
+            ShowSettingsDialog();
+            e.Handled = true;
+            return;
+        }
+
         switch (e.KeyCode)
         {
             case Keys.F5:
-                if (!_busy)
+                if (!_busy && !_agentBusy)
                 {
                     _ = RunAnalysisAsync(false);
                     e.Handled = true;
@@ -1013,6 +1014,10 @@ public sealed class MainForm : Form
                 if (_busy)
                 {
                     _cts?.Cancel();
+                }
+                else if (_agentBusy)
+                {
+                    _agentCts?.Cancel();
                 }
                 else
                 {
@@ -1037,6 +1042,7 @@ public sealed class MainForm : Form
     private void SyncModChips()
     {
         _chipAll.Checked = _modFilter == ModQuickFilter.All;
+        _chipPurple.Checked = _modFilter == ModQuickFilter.Purple;
         _chipRed.Checked = _modFilter == ModQuickFilter.Red;
         _chipYellow.Checked = _modFilter == ModQuickFilter.Yellow;
         _chipGreen.Checked = _modFilter == ModQuickFilter.Green;
@@ -1056,6 +1062,9 @@ public sealed class MainForm : Form
                 break;
             case KpiCard.Red:
                 OnModFilterChipClicked(ModQuickFilter.Red);
+                break;
+            case KpiCard.Purple:
+                OnModFilterChipClicked(ModQuickFilter.Purple);
                 break;
             case KpiCard.Movement:
                 OnModFilterChipClicked(ModQuickFilter.Moved);
@@ -1079,16 +1088,18 @@ public sealed class MainForm : Form
     {
         _lastResult = null;
         _playerConflicts = Array.Empty<PlayerConflict>();
+        _activePackageIdSet.Clear();
         _agentReports.Clear();
-        _patches.Clear();
-        _installed.Clear();
+        _bundledConflictKeys.Clear();
+        _patchBundle = null;
+        _bundleInstalledPath = null;
         _checkingKeys.Clear();
 
         _modConflicts = new List<PlayerConflict>();
-        _activeConflict = null;
-        _conflictCursor = 0;
         _selectedMod = null;
         _modCheckTask = Task.CompletedTask;
+        _purpleChoices.Clear();
+        _purpleChoicePanel.SetChoices(Array.Empty<PurpleChoiceRow>());
 
         _investigator?.Dispose();
         _investigator = null;
@@ -1105,7 +1116,7 @@ public sealed class MainForm : Form
         {
             if (!File.Exists(ModListResolver.DefaultModsConfigPath))
             {
-                SetStatus("未找到 ModsConfig.xml，请手动导入列表文件");
+                SetStatus("未找到 ModsConfig.xml");
                 return;
             }
 
@@ -1123,7 +1134,7 @@ public sealed class MainForm : Form
             _modCard.HeaderMeta = $"{mods.Count} 项 · 待分析";
             _modList.SetRows(Array.Empty<UiRow>(), preserveSelection: false);
             _modList.EmptyText = "已读取列表，尚未分析";
-            _modList.EmptyHint = $"当前配置包含 {mods.Count} 项模组，按 F5 或点击「开始分析」生成排序与冲突报告";
+            _modList.EmptyHint = $"当前配置包含 {mods.Count} 项模组";
             _inspector.ShowDocument(null);
 
             SetStatus($"已读取 ModsConfig.xml：{mods.Count} 项模组，游戏版本 {version}");
@@ -1159,7 +1170,7 @@ public sealed class MainForm : Form
             ClearAnalysisState();
 
             _modList.EmptyText = "已导入列表，尚未分析";
-            _modList.EmptyHint = $"共 {tokens.Count} 项模组，按 F5 开始分析";
+            _modList.EmptyHint = $"共 {tokens.Count} 项模组";
             _modCard.HeaderMeta = $"{tokens.Count} 项 · 待分析";
 
             SetStatus($"已导入 {tokens.Count} 项模组：{Path.GetFileName(dialog.FileName)}");
@@ -1194,7 +1205,7 @@ public sealed class MainForm : Form
             _modCard.HeaderMeta = $"{tokens.Count} 项 · 待分析";
             _modList.SetRows(Array.Empty<UiRow>(), preserveSelection: false);
             _modList.EmptyText = "已导入本地模组列表，尚未分析";
-            _modList.EmptyHint = $"共扫描到 {tokens.Count} 项本地模组（含官方内容及 Mods 目录模组），按 F5 或点击「开始分析」生成排序与冲突报告";
+            _modList.EmptyHint = $"共扫描到 {tokens.Count} 项本地模组（含官方内容及 Mods 目录模组）";
             _inspector.ShowDocument(null);
 
             SetStatus($"已导入本地模组列表：共 {tokens.Count} 项模组（含官方内容及本地 Mods 目录模组）");
@@ -1229,7 +1240,7 @@ public sealed class MainForm : Form
             _modCard.HeaderMeta = $"{tokens.Count} 项 · 待分析";
             _modList.SetRows(Array.Empty<UiRow>(), preserveSelection: false);
             _modList.EmptyText = "已导入工坊订阅列表，尚未分析";
-            _modList.EmptyHint = $"共扫描到 {tokens.Count} 项工坊订阅模组（含官方内容），按 F5 或点击「开始分析」生成排序与冲突报告";
+            _modList.EmptyHint = $"共扫描到 {tokens.Count} 项工坊订阅模组（含官方内容）";
             _inspector.ShowDocument(null);
 
             SetStatus($"已导入工坊订阅列表：共 {tokens.Count} 项模组（含官方内容及 Steam 创意工坊已订阅模组）");
@@ -1319,7 +1330,7 @@ public sealed class MainForm : Form
 
         if (_tokens.Count == 0)
         {
-            SetStatus("列表为空，请先读取配置或导入列表");
+            SetStatus("列表为空");
             return;
         }
 
@@ -1375,7 +1386,7 @@ public sealed class MainForm : Form
         catch (Exception ex)
         {
             _progress.Fail("分析失败");
-            SetStatus("分析失败，请检查下方提示");
+            SetStatus("分析失败");
             ShowFriendlyError("分析失败", ex);
         }
         finally
@@ -1390,11 +1401,12 @@ public sealed class MainForm : Form
     private string BuildCompletionSummary(ModSortReport report)
     {
         var gabs = report.GabsVerification?.Connected == true ? "实机已核验" : "离线日志核验";
+        var purple = _playerConflicts.Count(c => c.Grade == ConflictGrade.Purple);
         var red = _playerConflicts.Count(c => c.Grade == ConflictGrade.Red);
         var yellow = _playerConflicts.Count(c => c.Grade == ConflictGrade.Yellow);
         var conflictText = _playerConflicts.Count == 0
             ? "没有发现需要处理的冲突"
-            : $"需要处理 {_playerConflicts.Count} 项冲突（明确冲突 {red} / 需要确认 {yellow}）";
+            : $"需要处理 {_playerConflicts.Count} 项冲突（作者声明 {purple} / 明确冲突 {red} / 需要确认 {yellow}）";
 
         return $"分析完成：{report.TotalModsAnalyzed} 项模组 · {conflictText} · {gabs}";
     }
@@ -1406,15 +1418,19 @@ public sealed class MainForm : Form
     private void PrepareConflictWorkspace(PipelineResult result)
     {
         _playerConflicts = ConflictNarrative.Build(result.Report);
+        _activePackageIdSet.Clear();
+        foreach (var mod in result.Report.SortedMods.Where(m => m.IsActive))
+            _activePackageIdSet.Add(mod.PackageId);
+
         _agentReports.Clear();
-        _patches.Clear();
-        _installed.Clear();
+        _bundledConflictKeys.Clear();
+        _patchBundle = null;
+        _bundleInstalledPath = null;
         _checkingKeys.Clear();
 
         _modConflicts = new List<PlayerConflict>();
-        _activeConflict = null;
-        _conflictCursor = 0;
         _modCheckTask = Task.CompletedTask;
+        InitializePurpleChoices();
 
         _investigator?.Dispose();
         _investigator = new AgentInvestigator(
@@ -1464,16 +1480,19 @@ public sealed class MainForm : Form
         var query = _modSearch.SearchText.Trim();
         var rows = new List<UiRow>();
         var summaries = _lastResult.Report.SortedMods;
+        var excludedIds = BuildPurpleExclusionSet();
 
         foreach (var mod in summaries)
         {
+            if (_modFilter == ModQuickFilter.Purple && mod.Grade != ConflictGrade.Purple)
+                continue;
             if (_modFilter == ModQuickFilter.Red && mod.Grade != ConflictGrade.Red)
                 continue;
             if (_modFilter == ModQuickFilter.Yellow && mod.Grade != ConflictGrade.Yellow)
                 continue;
             if (_modFilter == ModQuickFilter.Green && mod.Grade != ConflictGrade.Green)
                 continue;
-            if (_modFilter == ModQuickFilter.Moved && (!mod.IsActive || mod.OrderDelta == 0))
+            if (_modFilter == ModQuickFilter.Moved && (!mod.IsActive || excludedIds.Contains(mod.PackageId) || mod.OrderDelta == 0))
                 continue;
             if (_modFilter == ModQuickFilter.Inactive && mod.IsActive)
                 continue;
@@ -1487,27 +1506,32 @@ public sealed class MainForm : Form
                 continue;
             }
 
-            var delta = mod.IsActive
-                ? mod.OrderDelta switch
-                {
-                    > 0 => $"▲{mod.OrderDelta}",
-                    < 0 => $"▼{Math.Abs(mod.OrderDelta)}",
-                    _ => "—"
-                }
-                : "新增";
+            var excluded = excludedIds.Contains(mod.PackageId);
+            var delta = !mod.IsActive
+                ? "新增"
+                : excluded
+                    ? "排除"
+                    : mod.OrderDelta switch
+                    {
+                        > 0 => $"▲{mod.OrderDelta}",
+                        < 0 => $"▼{Math.Abs(mod.OrderDelta)}",
+                        _ => "—"
+                    };
 
-            var conflictText = mod.RedConflictCount > 0
-                ? $"{mod.RedConflictCount} 红"
-                : mod.YellowUncertaintyCount > 0
-                    ? $"{mod.YellowUncertaintyCount} 黄"
-                    : "—";
+            var conflictText = mod.PurpleConflictCount > 0
+                ? $"{mod.PurpleConflictCount} 紫"
+                : mod.RedConflictCount > 0
+                    ? $"{mod.RedConflictCount} 红"
+                    : mod.YellowUncertaintyCount > 0
+                        ? $"{mod.YellowUncertaintyCount} 黄"
+                        : "—";
 
             rows.Add(new UiRow(new[]
             {
                 new UiCell(mod.RecommendedOrderIndex.ToString(), CellKind.Number),
                 new UiCell(delta, CellKind.Delta),
                 new UiCell(reportGradeText(mod.Grade), CellKind.Grade),
-                new UiCell(mod.IsActive ? "已启用" : "未启用", CellKind.Status),
+                new UiCell(excluded ? "已排除" : mod.IsActive ? "已启用" : "未启用", CellKind.Status),
                 new UiCell(mod.Name, CellKind.Emphasis),
                 new UiCell(mod.ArchitectureTierLabel, CellKind.Tier),
                 new UiCell(conflictText, CellKind.Text),
@@ -1518,9 +1542,7 @@ public sealed class MainForm : Form
         _modList.EmptyText = query.Length > 0 || _modFilter != ModQuickFilter.All
             ? "没有符合条件的模组"
             : "尚无排序结果";
-        _modList.EmptyHint = query.Length > 0 || _modFilter != ModQuickFilter.All
-            ? "调整搜索关键词或切换筛选条件后再试"
-            : "按 F5 重新执行分析";
+        _modList.EmptyHint = string.Empty;
 
         _modList.SetRows(rows);
 
@@ -1537,6 +1559,7 @@ public sealed class MainForm : Form
     {
         return grade switch
         {
+            ConflictGrade.Purple => "4.紫色",
             ConflictGrade.Red => "3.红色",
             ConflictGrade.Yellow => "2.黄色",
             _ => "1.绿色"
@@ -1557,9 +1580,6 @@ public sealed class MainForm : Form
             .ThenBy(c => c.InvolvesInactiveMod)
             .ToList();
 
-        _conflictCursor = 0;
-        _activeConflict = _modConflicts.FirstOrDefault();
-
         UpdateDetailForMod();
         UpdateCommandStates();
 
@@ -1575,14 +1595,142 @@ public sealed class MainForm : Form
             ? conflict.ModBName
             : conflict.ModAName;
 
-    private void ShowNextConflict()
-    {
-        if (_modConflicts.Count <= 1)
-            return;
+    // ───────────────────────────── 紫色冲突选择 ─────────────────────────────
 
-        _conflictCursor = (_conflictCursor + 1) % _modConflicts.Count;
-        _activeConflict = _modConflicts[_conflictCursor];
-        UpdateDetailForMod();
+    private void InitializePurpleChoices()
+    {
+        _purpleChoices.Clear();
+        foreach (var conflict in _playerConflicts.Where(IsPurpleChoiceApplicable))
+            _purpleChoices[conflict.Key] = PurpleChoice.Both;
+    }
+
+    /// <summary>只有双方都在启用列表里，作者声明的互斥才需要玩家做取舍。</summary>
+    private bool IsPurpleChoiceApplicable(PlayerConflict conflict)
+    {
+        if (conflict.Grade != ConflictGrade.Purple)
+            return false;
+
+        return !conflict.ModAPackageId.Equals(conflict.ModBPackageId, StringComparison.OrdinalIgnoreCase) &&
+               _activePackageIdSet.Contains(conflict.ModAPackageId) &&
+               _activePackageIdSet.Contains(conflict.ModBPackageId);
+    }
+
+    private PurpleChoice GetPurpleChoice(string conflictKey)
+        => _purpleChoices.TryGetValue(conflictKey, out var choice) ? choice : PurpleChoice.Both;
+
+    /// <summary>只选一边时，被放弃的一方从生效列表里排除；两边都选则都不排除。</summary>
+    private HashSet<string> BuildPurpleExclusionSet()
+    {
+        var excluded = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var conflict in _playerConflicts)
+        {
+            if (!IsPurpleChoiceApplicable(conflict))
+                continue;
+
+            switch (GetPurpleChoice(conflict.Key))
+            {
+                case PurpleChoice.A:
+                    excluded.Add(conflict.ModBPackageId);
+                    break;
+                case PurpleChoice.B:
+                    excluded.Add(conflict.ModAPackageId);
+                    break;
+            }
+        }
+
+        return excluded;
+    }
+
+    /// <summary>
+    /// 深度核查与兼容生成的作用域：全部生效冲突。
+    /// 紫色冲突只有选择"两边都保留"且双方都仍生效时才纳入；
+    /// 只保留一方时冲突已通过排除解决，不再进入补丁范围。
+    /// </summary>
+    private List<PlayerConflict> GetAgentScopeConflicts()
+    {
+        if (_lastResult == null)
+            return new List<PlayerConflict>();
+
+        var excluded = BuildPurpleExclusionSet();
+        var effective = new HashSet<string>(
+            _lastResult.Report.SortedMods
+                .Where(m => m.IsActive && !excluded.Contains(m.PackageId))
+                .Select(m => m.PackageId),
+            StringComparer.OrdinalIgnoreCase);
+
+        return _playerConflicts
+            .GroupBy(c => c.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .Where(c => c.Grade != ConflictGrade.Green)
+            .Where(c =>
+            {
+                if (c.Grade == ConflictGrade.Purple)
+                    return IsPurpleChoiceApplicable(c) &&
+                           GetPurpleChoice(c.Key) == PurpleChoice.Both &&
+                           effective.Contains(c.ModAPackageId) &&
+                           effective.Contains(c.ModBPackageId);
+
+                if (c.Category.Equals("MissingDependency", StringComparison.Ordinal))
+                    return effective.Contains(c.ModAPackageId);
+
+                return effective.Contains(c.ModAPackageId) && effective.Contains(c.ModBPackageId);
+            })
+            .OrderByDescending(c => c.Grade)
+            .ThenBy(c => c.PairLabel, StringComparer.CurrentCulture)
+            .ToList();
+    }
+
+    private HashSet<string> GetApprovedExplicitKeys(IEnumerable<PlayerConflict> conflicts)
+        => conflicts
+            .Where(CompatPatchEligibility.IsAuthorDeclared)
+            .Select(c => c.Key)
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    private void UpdatePurplePanel()
+    {
+        if (_selectedMod == null)
+        {
+            _purpleChoicePanel.SetChoices(Array.Empty<PurpleChoiceRow>());
+            return;
+        }
+
+        var rows = _playerConflicts
+            .Where(c => IsPurpleChoiceApplicable(c) && Involves(c, _selectedMod.PackageId))
+            .OrderBy(c => c.ModAName, StringComparer.CurrentCulture)
+            .Select(c => new PurpleChoiceRow(c.Key, c.ModAName, c.ModBName, GetPurpleChoice(c.Key)))
+            .ToList();
+
+        _purpleChoicePanel.SetChoices(rows);
+    }
+
+    private void OnPurpleChoiceChanged(PurpleChoiceChangedEventArgs e)
+    {
+        _purpleChoices[e.ConflictKey] = e.Choice;
+
+        var conflict = _playerConflicts.FirstOrDefault(c =>
+            c.Key.Equals(e.ConflictKey, StringComparison.OrdinalIgnoreCase));
+
+        RefreshModList();
+        UpdateCommandStates();
+        PersistEffectiveSelectionToAutoProfile();
+
+        if (conflict != null)
+        {
+            var kept = e.Choice switch
+            {
+                PurpleChoice.A => conflict.ModAName,
+                PurpleChoice.B => conflict.ModBName,
+                _ => string.Empty
+            };
+
+            SetStatus(e.Choice == PurpleChoice.Both
+                ? $"「{conflict.PairLabel}」双方都保留，已纳入兼容生成范围"
+                : $"仅保留「{kept}」，另一方将从排序写入与导出中排除");
+        }
+
+        // 点击事件来自选择条内部，等它返回后再重建详情，避免销毁正在处理事件的控件
+        if (!IsDisposed)
+            BeginInvoke(new Action(UpdateDetailForMod));
     }
 
     private void UpdateDetailForMod()
@@ -1591,6 +1739,7 @@ public sealed class MainForm : Form
         {
             _detailCard.HeaderTitle = "冲突详情";
             _detailCard.HeaderMeta = "未选择";
+            UpdatePurplePanel();
             _inspector.ShowDocument(null);
             UpdateCommandStates();
             return;
@@ -1602,9 +1751,10 @@ public sealed class MainForm : Form
         _detailCard.HeaderMeta = _modConflicts.Count == 0
             ? "没有需要处理的冲突"
             : checking > 0
-                ? $"冲突 {_conflictCursor + 1}/{_modConflicts.Count} · 核查中 {checking}"
-                : $"冲突 {_conflictCursor + 1}/{_modConflicts.Count} · 已核查 {verified}/{_modConflicts.Count}";
+                ? $"共 {_modConflicts.Count} 项 · 核查中 {checking}"
+                : $"共 {_modConflicts.Count} 项 · 已核查 {verified}/{_modConflicts.Count}";
 
+        UpdatePurplePanel();
         _inspector.ShowDocument(BuildModDocument(_selectedMod));
         UpdateCommandStates();
     }
@@ -1678,15 +1828,18 @@ public sealed class MainForm : Form
 
     private async Task DeepCheckAsync()
     {
-        var conflict = _activeConflict;
-        if (conflict == null)
+        var conflicts = GetAgentScopeConflicts();
+        if (_lastResult == null || conflicts.Count == 0)
+        {
+            SetStatus("当前没有需要深度核查的生效冲突");
             return;
+        }
 
         if (_investigator?.UsesModel != true)
         {
             var answer = MessageBox.Show(
                 this,
-                "深度核查需要配置模型接口。\n\n本地核查已经会反编译双方补丁并读取目标方法；配置模型后，Agent 会进一步分析隐藏隐患，并生成可编译的兼容补丁代码。\n\n是否现在打开设置？",
+                "深度核查需要配置模型接口。\n\n本地核查已经会反编译双方补丁并读取目标方法；配置模型后，Agent 会逐项复核全部生效冲突，进一步分析隐藏隐患，并生成可编译的兼容补丁代码。\n\n是否现在打开设置？",
                 "Agent 深度核查",
                 MessageBoxButtons.YesNo,
                 MessageBoxIcon.Information);
@@ -1703,24 +1856,44 @@ public sealed class MainForm : Form
         _agentCts?.Dispose();
         _agentCts = new CancellationTokenSource();
 
+        var completed = 0;
+        var failed = 0;
+
         try
         {
-            SetStatus($"Agent 正在用模型核查：{conflict.PairLabel}…");
-            var report = await _investigator.InvestigateAsync(conflict, _agentCts.Token, useModel: true);
-            _agentReports[report.ConflictKey] = report;
-            UpdateDetailForMod();
+            for (var i = 0; i < conflicts.Count; i++)
+            {
+                _agentCts.Token.ThrowIfCancellationRequested();
+                var conflict = conflicts[i];
+                SetStatus($"模型深度核查 {i + 1}/{conflicts.Count}：{conflict.PairLabel}…");
 
-            SetStatus(report.Error == null
-                ? $"模型核查完成：{conflict.PairLabel}"
-                : $"模型核查不可用，已回退本地：{report.Error}");
+                try
+                {
+                    var report = await _investigator.InvestigateAsync(conflict, _agentCts.Token, useModel: true);
+                    _agentReports[report.ConflictKey] = report;
+                    completed++;
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception ex)
+                {
+                    failed++;
+                    SetStatus($"深度核查失败：{conflict.PairLabel} · {ex.Message}");
+                }
+
+                if (_selectedMod != null)
+                    UpdateDetailForMod();
+            }
+
+            SetStatus(failed > 0
+                ? $"深度核查完成 {completed}/{conflicts.Count} 项，{failed} 项失败"
+                : $"深度核查完成：{completed} 项生效冲突已由模型复核");
         }
         catch (OperationCanceledException)
         {
-            SetStatus("已停止模型核查");
-        }
-        catch (Exception ex)
-        {
-            SetStatus($"模型核查失败：{ex.Message}");
+            SetStatus("已停止深度核查");
         }
         finally
         {
@@ -1728,39 +1901,86 @@ public sealed class MainForm : Form
             _agentCts?.Dispose();
             _agentCts = null;
             UpdateCommandStates();
+            if (_selectedMod != null)
+                UpdateDetailForMod();
         }
     }
 
     private async Task BuildPatchAsync()
     {
-        var conflict = _activeConflict;
-        if (conflict == null || _lastResult == null)
+        if (_lastResult == null || _investigator == null)
             return;
 
-        if (!_agentReports.TryGetValue(conflict.Key, out var report) || report.PatchPlan is not { } plan)
+        var conflicts = GetAgentScopeConflicts();
+
+        // 是否复核、能否生成补丁由 Agent 编排决定；这里只拦完全没有候选的列表。
+        if (conflicts.Count == 0)
         {
-            SetStatus("请先完成 Agent 核查，再生成补丁");
+            SetStatus("当前没有需要复核的生效冲突");
             return;
         }
 
-        if (plan.Kind is not ("harmony" or "xml"))
+        if (_investigator.UsesModel != true)
         {
-            MessageBox.Show(
+            var answer = MessageBox.Show(
                 this,
-                plan.Summary + (string.IsNullOrWhiteSpace(plan.RiskNote) ? string.Empty : "\n\n风险：" + plan.RiskNote),
-                "当前方案不需要补丁包",
-                MessageBoxButtons.OK,
+                "兼容生成由内部 Agent 复核全部生效冲突（包含紫色冲突中玩家选择两边都保留的项），并统一生成补丁方案。\n\n当前尚未配置模型接口，Agent 只能给出本地结论和顺序建议，无法自动编写补丁代码。\n\n是否现在打开设置？",
+                "生成合并兼容补丁",
+                MessageBoxButtons.YesNo,
                 MessageBoxIcon.Information);
+
+            if (answer == DialogResult.Yes)
+                ShowSettingsDialog();
+
             return;
         }
+
+        var reviewCount = conflicts.Count;
+        var approvedExplicitKeys = GetApprovedExplicitKeys(conflicts);
 
         _agentBusy = true;
+        _agentCts?.Dispose();
+        _agentCts = new CancellationTokenSource();
         UpdateCommandStates();
-        SetStatus("正在生成兼容补丁…");
+        SetStatus($"内部 Agent 正在复核 {reviewCount} 项生效冲突…");
 
         CompatPatchResult? patch = null;
         try
         {
+            var progress = new Progress<(int Done, int Total, string Label)>(p =>
+                SetStatus($"Agent 复核 {p.Done}/{p.Total} · {p.Label}"));
+
+            var coordinator = new CompatBundleAgent(_investigator);
+            var work = await coordinator.ReviewAsync(
+                conflicts,
+                progress,
+                _agentCts.Token,
+                onReport: null,
+                approvedAuthorDeclared: approvedExplicitKeys);
+
+            foreach (var report in work.Reports)
+                _agentReports[report.ConflictKey] = report;
+
+            UpdateDetailForMod();
+
+            if (work.Entries.Count == 0)
+            {
+                var reasons = work.Skipped
+                    .Take(8)
+                    .Select(s => $"· {s.Conflict.PairLabel}：{s.Reason}");
+                SetStatus("Agent 复核完成，但没有可生成补丁的冲突");
+                MessageBox.Show(
+                    this,
+                    "Agent 已复核全部生效冲突，但没有任何一项同时满足：有代码或 XML 原文证据、给出可编译的补丁方案。\n\n" +
+                    string.Join("\n", reasons),
+                    "生成合并兼容补丁",
+                    MessageBoxButtons.OK,
+                    MessageBoxIcon.Information);
+                return;
+            }
+
+            SetStatus($"Agent 复核完成：{work.Entries.Count} 项可修复，正在编译合并补丁…");
+
             var settings = ModListResolver.PathOptions.Settings;
             var outputRoot = string.IsNullOrWhiteSpace(settings.AgentPatchOutputDir)
                 ? AgentConfigLoader.DefaultPatchOutputDir
@@ -1769,25 +1989,52 @@ public sealed class MainForm : Form
             var builder = new CompatPatchBuilder(
                 ModListResolver.PathOptions.RimWorldInstallDir,
                 outputRoot,
-                _lastResult.EffectiveGameVersion);
+                _lastResult.EffectiveGameVersion,
+                approvedExplicitKeys,
+                _lastResult.Mods);
 
-            patch = await Task.Run(() => builder.Build(conflict, report));
+            IProgress<string> repairStatus = new Progress<string>(SetStatus);
+            var build = await coordinator.BuildWithRepairAsync(
+                builder,
+                work,
+                repairStatus.Report,
+                _agentCts.Token);
+
+            patch = build.Patch;
+            work = build.Work;
+
+            foreach (var report in work.Reports)
+                _agentReports[report.ConflictKey] = report;
+
+            UpdateDetailForMod();
+        }
+        catch (OperationCanceledException)
+        {
+            SetStatus("已停止合并补丁生成");
+            return;
         }
         catch (Exception ex)
         {
-            SetStatus($"生成补丁失败：{ex.Message}");
-            MessageBox.Show(this, ex.Message, "生成兼容补丁", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            SetStatus($"生成合并补丁失败：{ex.Message}");
+            MessageBox.Show(this, ex.Message, "生成合并兼容补丁", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            return;
         }
         finally
         {
             _agentBusy = false;
+            _agentCts?.Dispose();
+            _agentCts = null;
             UpdateCommandStates();
         }
 
         if (patch == null)
             return;
 
-        _patches[conflict.Key] = patch;
+        _patchBundle = patch;
+        _bundledConflictKeys.Clear();
+        foreach (var key in patch.IncludedConflictKeys)
+            _bundledConflictKeys.Add(key);
+        _bundleInstalledPath = null;
         UpdateDetailForMod();
 
         if (!patch.Success || !patch.IsModPackage)
@@ -1801,56 +2048,29 @@ public sealed class MainForm : Form
             return;
         }
 
-        SetStatus("兼容补丁已生成：" + patch.OutputDirectory);
+        SetStatus($"合并兼容补丁已生成：{patch.OutputDirectory}");
 
+        var skippedNote = patch.SkippedReasons.Count == 0
+            ? string.Empty
+            : $"\n另有 {patch.SkippedReasons.Count} 项冲突未并入，原因见包内 README。";
         var confirm = MessageBox.Show(
             this,
-            $"兼容补丁已生成：\n{patch.OutputDirectory}\n\n是否立即安装到游戏 Mods 目录，并在 ModsConfig.xml 中启用？\n\n安装前会自动备份 ModsConfig.xml。",
-            "安装兼容补丁",
+            $"合并兼容补丁已生成：\n{patch.OutputDirectory}\n\n" +
+            $"收录 {patch.IncludedConflictKeys.Count} 项冲突，共一个补丁 mod。{skippedNote}\n\n" +
+            "是否立即安装到游戏 Mods 目录，并在 ModsConfig.xml 中启用？\n\n安装前会自动备份 ModsConfig.xml。",
+            "安装合并兼容补丁",
             MessageBoxButtons.YesNo,
             MessageBoxIcon.Question,
             MessageBoxDefaultButton.Button2);
 
         if (confirm == DialogResult.Yes)
-            InstallPatchCore(conflict);
+            InstallPatchCore();
     }
 
-    private void InstallPatchWithConfirm()
+    private void InstallPatchCore()
     {
-        var conflict = _activeConflict;
-        if (conflict == null)
-            return;
-
-        if (_installed.ContainsKey(conflict.Key))
-        {
-            SetStatus("该冲突的兼容补丁已经安装");
-            return;
-        }
-
-        if (!_patches.TryGetValue(conflict.Key, out var patch) || !patch.Success || !patch.IsModPackage)
-        {
-            SetStatus("请先生成可安装的兼容补丁");
-            return;
-        }
-
-        var target = Path.Combine(ModListResolver.PathOptions.RimWorldInstallDir, "Mods", Path.GetFileName(patch.OutputDirectory.TrimEnd('\\', '/')));
-        var confirm = MessageBox.Show(
-            this,
-            $"即将安装兼容补丁：\n{patch.OutputDirectory}\n\n目标目录：{target}\n配置写入：{ModListResolver.DefaultModsConfigPath}\n\n原 ModsConfig.xml 会自动备份。是否继续？",
-            "安装兼容补丁",
-            MessageBoxButtons.OKCancel,
-            MessageBoxIcon.Warning,
-            MessageBoxDefaultButton.Button2);
-
-        if (confirm != DialogResult.OK)
-            return;
-
-        InstallPatchCore(conflict);
-    }
-
-    private void InstallPatchCore(PlayerConflict conflict)
-    {
-        if (!_patches.TryGetValue(conflict.Key, out var patch))
+        var patch = _patchBundle;
+        if (patch == null)
             return;
 
         var result = CompatPatchInstaller.Install(
@@ -1860,12 +2080,12 @@ public sealed class MainForm : Form
 
         if (!result.Success)
         {
-            SetStatus("安装补丁失败：" + result.Message);
-            MessageBox.Show(this, result.Message, "安装兼容补丁", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+            SetStatus("安装合并补丁失败：" + result.Message);
+            MessageBox.Show(this, result.Message, "安装合并兼容补丁", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
         }
 
-        _installed[conflict.Key] = result.InstalledPath ?? patch.OutputDirectory;
+        _bundleInstalledPath = result.InstalledPath ?? patch.OutputDirectory;
         SetStatus(result.Message);
 
         if (result.Warnings.Count > 0)
@@ -1873,33 +2093,6 @@ public sealed class MainForm : Form
 
         UpdateDetailForMod();
         UpdateCommandStates();
-    }
-
-    private void OpenPatchFolder()
-    {
-        var conflict = _activeConflict;
-        if (conflict == null || !_patches.TryGetValue(conflict.Key, out var patch))
-            return;
-
-        if (!Directory.Exists(patch.OutputDirectory))
-        {
-            SetStatus("补丁目录不存在：" + patch.OutputDirectory);
-            return;
-        }
-
-        try
-        {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = "explorer.exe",
-                Arguments = $"\"{patch.OutputDirectory}\"",
-                UseShellExecute = true
-            });
-        }
-        catch (Exception ex)
-        {
-            SetStatus("打开补丁目录失败：" + ex.Message);
-        }
     }
 
     private static string Tail(string text, int max)
@@ -1917,9 +2110,9 @@ public sealed class MainForm : Form
     private DetailDocument BuildModDocument(ModGradeSummary mod)
     {
         var blocks = new List<DetailBlock>();
-        var conflict = _activeConflict;
+        const int maxDetailedConflicts = 8;
 
-        if (conflict == null)
+        if (_modConflicts.Count == 0)
         {
             var items = new List<DetailItem>
             {
@@ -1934,54 +2127,63 @@ public sealed class MainForm : Form
         }
         else
         {
-            var items = new List<DetailItem>
+            foreach (var conflict in _modConflicts.Take(maxDetailedConflicts))
             {
-                new("对方模组", OtherModName(conflict, mod.PackageId), DetailValueKind.Strong),
-                new("会发生什么", conflict.What),
-                new("可能表现", conflict.Impact),
-                new("建议", conflict.Action)
-            };
+                var items = new List<DetailItem>
+                {
+                    new("对方模组", OtherModName(conflict, mod.PackageId), DetailValueKind.Strong),
+                    new("会发生什么", conflict.What),
+                    new("可能表现", conflict.Impact),
+                    new("建议", conflict.Action)
+                };
 
-            if (conflict.InvolvesInactiveMod)
-                items.Add(new DetailItem("注意", "其中一方当前未启用；启用后这项冲突才会真正发生。", DetailValueKind.Bullet));
+                if (conflict.InvolvesInactiveMod)
+                    items.Add(new DetailItem("注意", "其中一方当前未启用；启用后这项冲突才会真正发生。", DetailValueKind.Bullet));
 
-            blocks.Add(new DetailBlock(
-                Title: conflict.Headline,
-                Meta: $"{conflict.SeverityLabel} · {_conflictCursor + 1}/{_modConflicts.Count}",
-                Accent: conflict.Grade,
-                Items: items));
+                if (conflict.Grade == ConflictGrade.Purple && IsPurpleChoiceApplicable(conflict))
+                {
+                    var other = OtherModName(conflict, mod.PackageId);
+                    items.Add(new DetailItem(
+                        "取舍",
+                        GetPurpleChoice(conflict.Key) == PurpleChoice.Both
+                            ? $"当前双方都保留。若只保留其中一方，另一方（{other}）会从排序写入与导出中排除。"
+                            : $"当前只保留一方；双方都保留时双方都会进入兼容生成范围。",
+                        DetailValueKind.Bullet));
+                }
+
+                blocks.Add(new DetailBlock(
+                    Title: conflict.Headline,
+                    Meta: conflict.SeverityLabel,
+                    Accent: conflict.Grade,
+                    Items: items));
+
+                blocks.Add(BuildAgentBlock(conflict));
+
+                var patchBlock = BuildPatchBlock(conflict);
+                if (patchBlock != null)
+                    blocks.Add(patchBlock);
+            }
+
+            if (_modConflicts.Count > maxDetailedConflicts)
+            {
+                blocks.Add(new DetailBlock(
+                    "其余冲突",
+                    new[]
+                    {
+                        new DetailItem(
+                            string.Empty,
+                            $"还有 {_modConflicts.Count - maxDetailedConflicts} 项冲突未展开。",
+                            DetailValueKind.Bullet)
+                    }));
+            }
         }
-
-        if (conflict != null)
-        {
-            blocks.Add(BuildAgentBlock(conflict));
-
-            var patchBlock = BuildPatchBlock(conflict);
-            if (patchBlock != null)
-                blocks.Add(patchBlock);
-        }
-
-        if (_modConflicts.Count > 1)
-        {
-            var items = _modConflicts
-                .Select((c, index) => new DetailItem(
-                    index == _conflictCursor ? "查看中" : string.Empty,
-                    $"{c.SeverityLabel} · 与「{OtherModName(c, mod.PackageId)}」：{c.Headline}",
-                    DetailValueKind.Bullet))
-                .ToArray();
-
-            blocks.Add(new DetailBlock("该模组的全部冲突", items, $"{_modConflicts.Count} 项 · 用「下一项冲突」切换"));
-        }
-
-        if (_techDetails)
-            blocks.Add(BuildModTechnicalBlock(mod, conflict));
 
         var (_, _, _, shortLabel) = UiTheme.GradeStyle(mod.Grade);
         var subtitle = _modConflicts.Count == 0
             ? $"{shortLabel} · {mod.ArchitectureTierLabel} · 推荐顺位 #{mod.RecommendedOrderIndex}"
             : $"{shortLabel} · {mod.ArchitectureTierLabel} · {_modConflicts.Count} 项冲突";
 
-        return new DetailDocument(mod.Name, subtitle, blocks, conflict?.Grade ?? mod.Grade);
+        return new DetailDocument(mod.Name, subtitle, blocks, _modConflicts.Count > 0 ? _modConflicts[0].Grade : mod.Grade);
     }
 
     /// <summary>Agent 结论块：先说结论，再给玩家看得懂的隐患；技术证据留在 Badge 与「技术细节」里。</summary>
@@ -2053,7 +2255,16 @@ public sealed class MainForm : Form
             items.Add(new DetailItem("说明", report.FixStrategy == "disable_one"
                 ? "这类冲突无法靠补丁安全修复，建议二选一。"
                 : "当前结论没有提供可生成的补丁方案。"));
-            return new DetailBlock("兼容修复", items, "无需补丁包");
+
+            if (_patchBundle != null)
+            {
+                var skipReason = BundleSkipReason(conflict);
+                items.Add(new DetailItem("合并补丁", skipReason == null
+                    ? "该冲突未并入本次合并补丁。"
+                    : "未并入本次合并补丁：" + skipReason));
+            }
+
+            return new DetailBlock("兼容修复", items, _patchBundle == null ? "无需补丁包" : "未并入");
         }
 
         items.Add(new DetailItem("方案", plan.Summary, DetailValueKind.Strong));
@@ -2066,27 +2277,46 @@ public sealed class MainForm : Form
             items.Add(new DetailItem("文件", string.Join("、", plan.Files.Select(f => f.RelativePath)), DetailValueKind.Mono));
 
         ConflictGrade? accent = null;
+        var bundled = _bundledConflictKeys.Contains(conflict.Key);
 
-        if (_patches.TryGetValue(conflict.Key, out var patch))
+        if (_patchBundle != null)
         {
-            accent = patch.Success && patch.IsModPackage ? ConflictGrade.Green : ConflictGrade.Red;
-
-            if (patch.Success && patch.IsModPackage)
+            if (bundled)
             {
-                items.Add(new DetailItem("补丁包", patch.OutputDirectory, DetailValueKind.Mono));
-                if (_installed.TryGetValue(conflict.Key, out var installedPath))
-                    items.Add(new DetailItem("安装状态", "已安装：" + installedPath, DetailValueKind.Mono));
+                accent = _patchBundle.Success && _patchBundle.IsModPackage
+                    ? ConflictGrade.Green
+                    : ConflictGrade.Red;
+
+                if (_patchBundle.Success && _patchBundle.IsModPackage)
+                {
+                    items.Add(new DetailItem("合并补丁包", _patchBundle.OutputDirectory, DetailValueKind.Mono));
+                    items.Add(new DetailItem("收录状态", "该冲突已并入合并补丁"));
+                    if (!string.IsNullOrWhiteSpace(_bundleInstalledPath))
+                        items.Add(new DetailItem("安装状态", "已安装：" + _bundleInstalledPath, DetailValueKind.Mono));
+                }
+                else
+                {
+                    items.Add(new DetailItem("生成结果", _patchBundle.Message));
+                    if (!string.IsNullOrWhiteSpace(_patchBundle.CompilerOutput))
+                        items.Add(new DetailItem("编译输出", Tail(_patchBundle.CompilerOutput!, 800), DetailValueKind.Mono));
+                }
             }
             else
             {
-                items.Add(new DetailItem("生成结果", patch.Message));
-                if (!string.IsNullOrWhiteSpace(patch.CompilerOutput))
-                    items.Add(new DetailItem("编译输出", Tail(patch.CompilerOutput!, 800), DetailValueKind.Mono));
+                accent = ConflictGrade.Yellow;
+                var skipReason = BundleSkipReason(conflict);
+                items.Add(new DetailItem(
+                    "合并补丁",
+                    skipReason == null
+                        ? "该冲突未并入本次合并补丁。"
+                        : "未并入本次合并补丁：" + skipReason));
             }
         }
         else if (plan.Kind is "harmony" or "xml")
         {
-            items.Add(new DetailItem("下一步", "点击「生成兼容补丁」，会编译并封装成可安装的 mod 包。"));
+            items.Add(new DetailItem(
+                "下一步",
+                "可生成兼容补丁：内部 Agent 会复核全部生效冲突，并把可修复项统一编译进一个补丁 mod。"));
         }
         else if (plan.Kind == "order_only")
         {
@@ -2095,8 +2325,8 @@ public sealed class MainForm : Form
         else
         {
             items.Add(new DetailItem("下一步", report.FixStrategy == "compat_patch"
-                ? "本地核查不会生成未经核对的代码；点「深度核查」配置模型后，可生成并编译兼容补丁。"
-                : "当前方案需要人工处理，请按上面的建议操作。"));
+                ? "本地核查不会生成未经核对的代码；配置模型后可生成并编译兼容补丁。"
+                : "当前方案需要人工处理。"));
         }
 
         var meta = plan.Kind switch
@@ -2107,55 +2337,20 @@ public sealed class MainForm : Form
             _ => "人工处理"
         };
 
-        if (_installed.ContainsKey(conflict.Key))
+        if (_patchBundle != null)
+            meta = bundled ? "已并入合并包" : "未并入";
+
+        if (bundled && !string.IsNullOrWhiteSpace(_bundleInstalledPath))
             meta = "已安装";
 
         return new DetailBlock("兼容修复", items, meta, accent);
     }
 
-    private DetailBlock BuildModTechnicalBlock(ModGradeSummary mod, PlayerConflict? conflict)
+    private string? BundleSkipReason(PlayerConflict conflict)
     {
-        var items = new List<DetailItem>
-        {
-            new("PackageId", mod.PackageId, DetailValueKind.Mono),
-            new("启用状态", mod.IsActive ? "已启用（ModsConfig.xml）" : "已订阅但未启用"),
-            new("架构分层", mod.ArchitectureTierLabel),
-            new("原顺位", !mod.IsActive
-                ? "—（未在启用列表中）"
-                : mod.OrderDelta == 0
-                    ? $"#{mod.OriginalOrderIndex}（未变动）"
-                    : $"#{mod.OriginalOrderIndex} → #{mod.RecommendedOrderIndex}（{(mod.OrderDelta > 0 ? "提前" : "延后")} {Math.Abs(mod.OrderDelta)} 位）"),
-            new("Harmony", $"静态补丁 {mod.HarmonyPatchCount} 处 · 动态反射点 {mod.DynamicPatchSiteCount} 处"),
-            new("XML", $"Def {mod.XmlDefCount} 项 · Patch {mod.XmlPatchCount} 项"),
-            new("程序集", mod.AssemblyNames.Count == 0
-                ? "无（纯 XML 模组）"
-                : string.Join("、", mod.AssemblyNames), DetailValueKind.Mono),
-            new("来源", mod.IsOfficialCoreOrDlc ? "官方内容" : mod.IsWorkshopMod ? "Steam 创意工坊" : "本地目录"),
-            new("作者", string.IsNullOrWhiteSpace(mod.Author) ? "未知" : mod.Author!),
-            new("安装路径", string.IsNullOrWhiteSpace(mod.RootDirectory) ? "—" : mod.RootDirectory!, DetailValueKind.Mono)
-        };
-
-        if (!string.IsNullOrWhiteSpace(mod.WorkshopId))
-            items.Add(new DetailItem("工坊 ID", mod.WorkshopId!, DetailValueKind.Mono));
-
-        if (conflict != null)
-        {
-            items.Add(new DetailItem("技术分类", $"{conflict.CategoryLabel}（{conflict.Category}）", DetailValueKind.Mono));
-
-            foreach (var target in conflict.Targets.Take(6))
-                items.Add(new DetailItem("冲突目标", target, DetailValueKind.Mono));
-
-            if (_agentReports.TryGetValue(conflict.Key, out var report) && report.CodeSources.Count > 0)
-                items.Add(new DetailItem("证据来源", string.Join("、", report.CodeSources.Take(6)), DetailValueKind.Mono));
-        }
-
-        foreach (var reason in mod.KeyReasons.Take(6))
-            items.Add(new DetailItem(
-                reason.StartsWith("前置约束", StringComparison.Ordinal) ? "排序约束" : "评级依据",
-                reason,
-                DetailValueKind.Bullet));
-
-        return new DetailBlock("技术细节", items, "仅在需要排查时查看");
+        var note = _patchBundle?.SkippedReasons.FirstOrDefault(r =>
+            r.StartsWith(conflict.PairLabel + "：", StringComparison.Ordinal));
+        return note == null ? null : note[(conflict.PairLabel.Length + 1)..];
     }
 
     private static string FixStrategyLabel(string strategy) => strategy switch
@@ -2219,11 +2414,50 @@ public sealed class MainForm : Form
 
     // ───────────────────────────── 导出与应用 ─────────────────────────────
 
+    /// <summary>当前真正要写入游戏的启用列表：原始启用项减去紫色冲突里被放弃的一侧。</summary>
+    private List<string> GetEffectiveActivePackageIds()
+    {
+        if (_lastResult == null)
+            return new List<string>();
+
+        var excluded = BuildPurpleExclusionSet();
+        return _lastResult.Report.SortedMods
+            .Where(m => m.IsActive && !excluded.Contains(m.PackageId))
+            .Select(m => m.PackageId)
+            .ToList();
+    }
+
+    /// <summary>紫色取舍变化后，把当前生效列表同步进自动保存的排序档，避免启动游戏时写回旧选择。</summary>
+    private void PersistEffectiveSelectionToAutoProfile()
+    {
+        const string autoSaveName = "自动保存";
+        if (_lastResult == null || !_profileStore.NameExists(autoSaveName))
+            return;
+
+        var activeIds = GetEffectiveActivePackageIds();
+        if (activeIds.Count == 0)
+            return;
+
+        var profile = new SortListProfile(
+            autoSaveName,
+            DateTime.UtcNow,
+            _lastResult.EffectiveGameVersion,
+            activeIds,
+            _lastResult.KnownExpansions.ToList(),
+            _lastResult.Report.TotalModsAnalyzed,
+            _lastResult.Report.RedModCount,
+            _lastResult.Report.YellowModCount);
+
+        _profileStore.Upsert(profile);
+        RefreshSortListsButton();
+        RebuildProfileMenu();
+    }
+
     private void ApplyToGameConfig()
     {
         if (_lastResult == null)
         {
-            SetStatus("请先执行分析，再写入游戏配置");
+            SetStatus("尚未分析，无法写入游戏配置");
             return;
         }
 
@@ -2246,6 +2480,21 @@ public sealed class MainForm : Form
                        "不会写入 ModsConfig.xml（避免意外激活数百个模组）。";
         }
 
+        var effectiveIds = GetEffectiveActivePackageIds();
+        var excludedCount = _lastResult.Report.SortedMods.Count(m => m.IsActive) - effectiveIds.Count;
+        if (excludedCount > 0)
+        {
+            warning += $"\n\n紫色冲突取舍：{excludedCount} 项被放弃的模组不会写入配置。" +
+                       "双方都保留时这两项都会进入兼容生成范围。";
+        }
+
+        var openPurple = GetAgentScopeConflicts().Count(c => c.Grade == ConflictGrade.Purple);
+        if (openPurple > 0)
+        {
+            warning += $"\n\n注意：仍有 {openPurple} 对作者声明不兼容的模组双方都保留。" +
+                       "写入后进入游戏可能报错或损坏存档，建议先在右侧完成兼容生成。";
+        }
+
         var confirm = MessageBox.Show(
             this,
             $"即将把推荐排序写入：\n{target}\n\n原文件会先自动备份为 ModsConfig.backup.时间戳.xml。{warning}\n\n是否继续？",
@@ -2262,10 +2511,10 @@ public sealed class MainForm : Form
 
         try
         {
-            var backup = ModSortReportBuilder.ApplyModsConfigWithBackup(
+            var backup = ModSortReportBuilder.ApplyPackageIdsWithBackup(
                 target,
                 _lastResult.EffectiveGameVersion,
-                _lastResult.Report.SortedMods,
+                effectiveIds,
                 _lastResult.KnownExpansions);
 
             SetStatus(backup == null
@@ -2282,7 +2531,7 @@ public sealed class MainForm : Form
     {
         if (_lastResult == null)
         {
-            SetStatus("请先执行分析，再导出 ModsConfig.xml");
+            SetStatus("尚未分析，无法导出 ModsConfig.xml");
             return;
         }
 
@@ -2298,10 +2547,10 @@ public sealed class MainForm : Form
 
         try
         {
-            ModSortReportBuilder.ExportModsConfigXml(
+            ModSortReportBuilder.ExportPackageIdsAsModsConfigXml(
                 dialog.FileName,
                 _lastResult.EffectiveGameVersion,
-                _lastResult.Report.SortedMods,
+                GetEffectiveActivePackageIds(),
                 _lastResult.KnownExpansions);
 
             SetStatus($"已导出 ModsConfig.xml：{dialog.FileName}");
@@ -2316,7 +2565,7 @@ public sealed class MainForm : Form
     {
         if (_lastResult == null)
         {
-            SetStatus("请先执行分析，再导出 JSON");
+            SetStatus("尚未分析，无法导出 JSON");
             return;
         }
 
@@ -2354,7 +2603,7 @@ public sealed class MainForm : Form
     {
         if (_lastResult == null)
         {
-            SetStatus("请先执行分析，再导出报告");
+            SetStatus("尚未分析，无法导出报告");
             return;
         }
 
@@ -2386,9 +2635,9 @@ public sealed class MainForm : Form
         var hasResult = _lastResult != null;
         var hasTokens = _tokens.Count > 0;
 
-        _btnAnalyze.Enabled = !_busy && hasTokens;
-        _btnStop.Enabled = _busy;
-        _btnImport.Enabled = !_busy;
+        _btnAnalyze.Enabled = !_busy && !_agentBusy && hasTokens;
+        _btnStop.Enabled = _busy || _agentBusy;
+        _btnImport.Enabled = !_busy && !_agentBusy;
         _btnApply.Enabled = hasResult && !_busy;
         _btnExport.Enabled = hasResult && !_busy;
         _btnLaunchGame.Enabled = !_busy;
@@ -2396,24 +2645,22 @@ public sealed class MainForm : Form
 
         _btnAnalyze.Text = _busy ? "分析进行中…" : "开始分析";
 
-        var conflict = _activeConflict;
-        var hasConflict = _selectedMod != null && conflict != null;
-        var report = hasConflict && _agentReports.TryGetValue(conflict!.Key, out var found) ? found : null;
-        var patch = hasConflict && _patches.TryGetValue(conflict!.Key, out var built) ? built : null;
-        var hasPackage = patch is { Success: true, IsModPackage: true };
-        var installed = hasConflict && _installed.ContainsKey(conflict!.Key);
+        var hasAgentTargets = GetAgentScopeConflicts().Count > 0;
+        var hasPackage = _patchBundle is { Success: true, IsModPackage: true };
 
-        _btnNextConflict.Enabled = !_busy && !_agentBusy && _modConflicts.Count > 1;
-        _btnDeepCheck.Enabled = hasConflict && !_busy && !_agentBusy;
-        _btnBuildPatch.Enabled = hasConflict && !_busy && !_agentBusy &&
-                                 report?.PatchPlan is { Kind: "harmony" or "xml" } && !installed;
-        _btnInstallPatch.Enabled = hasConflict && !_busy && !_agentBusy && hasPackage && !installed;
-        _btnOpenPatch.Enabled = hasConflict && patch != null;
-        _btnInstallPatch.Text = installed ? "已安装" : "安装补丁";
-        _chipTech.Enabled = _selectedMod != null;
+        _btnDeepCheck.Enabled = !_busy && !_agentBusy && hasAgentTargets;
+        _btnBuildPatch.Enabled = !_busy && !_agentBusy && hasAgentTargets;
+        _btnBuildPatch.Text = hasPackage ? "重新兼容生成" : "兼容生成";
 
         _btnMaximize.IsMaximized = WindowState == FormWindowState.Maximized;
         _btnMaximize.Invalidate();
+        UpdateWindowButtonTips();
+    }
+
+    private void UpdateWindowButtonTips()
+    {
+        _chromeTips.SetToolTip(_btnMaximize,
+            WindowState == FormWindowState.Maximized ? "还原窗口" : "最大化");
     }
 
     private void SetStatus(string text)

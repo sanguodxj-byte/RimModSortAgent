@@ -515,7 +515,7 @@ internal sealed class FilterChip : Control
         Accent = accent ?? UiTheme.Accent;
         BackColor = Color.Transparent;
         Height = 26;
-        Width = UiTheme.MeasureWidth(text, UiTheme.SmallFont) + UiTheme.Scale(this, 26);
+        Width = UiTheme.MeasureWidth(text, UiTheme.SmallFont) + UiTheme.Scale(this, 40);
         Cursor = Cursors.Hand;
         TabStop = true;
     }
@@ -541,7 +541,7 @@ internal sealed class FilterChip : Control
     protected override void OnTextChanged(EventArgs e)
     {
         base.OnTextChanged(e);
-        Width = UiTheme.MeasureWidth(Text, UiTheme.SmallFont) + UiTheme.Scale(this, 34);
+        Width = UiTheme.MeasureWidth(Text, UiTheme.SmallFont) + UiTheme.Scale(this, 40);
         Invalidate();
     }
 

@@ -258,14 +258,9 @@ internal sealed class DetailInspector : Control, IWheelScrollable
     private void PaintPlaceholder(Graphics g)
     {
         var area = new Rectangle(0, 0, ClientSize.Width, ClientSize.Height);
-        UiTheme.DrawText(g, "选择左侧模组或右侧冲突条目", UiTheme.SectionFont,
+        UiTheme.DrawText(g, "未选中模组", UiTheme.SectionFont,
             new Rectangle(area.X + 20, area.Y + area.Height / 2 - 24, area.Width - 40, 26),
             UiTheme.TextSecondary,
-            TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
-
-        UiTheme.DrawText(g, "这里会显示冲突证据链、依赖拓扑与排序依据", UiTheme.SmallFont,
-            new Rectangle(area.X + 20, area.Y + area.Height / 2 + 2, area.Width - 40, 22),
-            UiTheme.TextMuted,
             TextFormatFlags.HorizontalCenter | TextFormatFlags.VerticalCenter);
     }
 
