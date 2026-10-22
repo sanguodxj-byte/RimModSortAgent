@@ -1,4 +1,4 @@
-using ModSorterAgent.Discovery;
+﻿using ModSorterAgent.Discovery;
 using ModSorterAgent.Models;
 
 namespace ModSorterAgent.Sorting;
@@ -6,18 +6,25 @@ namespace ModSorterAgent.Sorting;
 /// <summary>
 /// 分层拓扑排序器。
 ///
-/// 旧实现会为"所有低层 → 所有高层"的两两组合强行插入有向边（O(N²) 边膨胀），
 /// 既拖慢求解，也会错误地锁定同层/跨层模组之间的相对顺序。
 ///
-/// 新实现把"架构分层"从<b>约束</b>降级为<b>启发式优先级</b>：
-///   1. 只把About/Harmony/XML 分析产出的真实约束作为图边；
+/// 现实现把"架构分层"从<b>约束</b>降级为<b>启发式优先级</b>：
+///   1. 只把 About/Harmony/XML 分析产出的真实约束作为图边；
 ///   2. 用"按权重降序增量加边 + 成环即拒绝"的方式保证图为 DAG，并记录硬性环路；
-///   3. 用 Kahn 算法配合优先队列出队，队列键 = (架构层, 层内序号, 原顺位)，
-///      在满足全部真实约束的前提下尽量贴近理想分层。
+///   3. 按优先级依次取出模组，先递归解决它的全部前置再输出它自己。
+///
+/// 第 3 步不用 Kahn 优先队列：Kahn 只从"当前入度为零"的集合里挑最优，
+/// 一旦高优先级节点被某个前置阻塞（如 Core 等 Loading Progress），
+/// 队列里其它无关的就绪节点会抢在它前面输出，把 Core 挤出底座区。
+/// 优先级驱动的 DFS 会把前置紧贴在被依赖者之前输出，高优先级节点不会被无关节点插队。
 /// </summary>
 public static class TopologicalModSorter
 {
     public sealed record ModTierInfo(int TierRank, int SubRank, string TierLabel);
+
+    public sealed record DroppedSoftEdgeRecord(
+        OrderingEdge Edge,
+        string Reason);
 
     public sealed record SortResult(
         List<ModDescriptor> SortedMods,
@@ -25,7 +32,13 @@ public static class TopologicalModSorter
         List<string> HardCycleDescriptions,
         List<PairwiseConflictFinding> CycleConflictFindings,
         IReadOnlyDictionary<string, ModTierInfo> TierByPackageId,
-        int TierInversionCount);
+        int TierInversionCount,
+        IReadOnlyList<OrderingEdge>? BrokenEdges = null,
+        IReadOnlyList<DroppedSoftEdgeRecord>? DroppedSoftEdges = null)
+    {
+        public IReadOnlyList<OrderingEdge> BrokenEdges { get; init; } = BrokenEdges ?? Array.Empty<OrderingEdge>();
+        public IReadOnlyList<DroppedSoftEdgeRecord> DroppedSoftEdges { get; init; } = DroppedSoftEdges ?? Array.Empty<DroppedSoftEdgeRecord>();
+    }
 
     public static SortResult Sort(
         IReadOnlyList<ModDescriptor> inputMods,
@@ -48,9 +61,14 @@ public static class TopologicalModSorter
                         modById.ContainsKey(e.AfterPackageId) &&
                         !e.BeforePackageId.Equals(e.AfterPackageId, StringComparison.OrdinalIgnoreCase))
             .GroupBy(e => $"{e.BeforePackageId.ToLowerInvariant()}->{e.AfterPackageId.ToLowerInvariant()}")
-            .Select(g => g.OrderByDescending(x => x.IsHardConstraint).ThenByDescending(x => x.Weight).First())
+            .Select(g => g.OrderByDescending(x => x.IsHardConstraint)
+                          .ThenByDescending(x => x.Weight)
+                          .ThenBy(x => x.SourceKind, StringComparer.Ordinal)
+                          .First())
             .OrderByDescending(e => e.IsHardConstraint)
             .ThenByDescending(e => e.Weight)
+            .ThenBy(e => e.BeforePackageId, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(e => e.AfterPackageId, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
         var adjacency = mods.ToDictionary(
@@ -59,21 +77,30 @@ public static class TopologicalModSorter
             StringComparer.OrdinalIgnoreCase);
 
         var activeEdges = new List<OrderingEdge>(deduplicated.Count);
+        var brokenEdges = new List<OrderingEdge>();
+        var droppedSoftEdges = new List<DroppedSoftEdgeRecord>();
         var hardCycles = new List<string>();
         var cycleFindings = new List<PairwiseConflictFinding>();
 
         // 增量加边：按约束强度降序尝试，成环则拒绝。
-        // 被拒绝的硬约束上报为红色环路；被拒绝的软约束上报为黄色提示，不再静默丢弃。
+        // 被拒绝的硬约束（About 循环依赖）上报为红色环路；软启发成环时直接舍弃以保 DAG 可解，记录到 DroppedSoftEdges。
         foreach (var edge in deduplicated)
         {
             cancellationToken.ThrowIfCancellationRequested();
 
-            if (CreatesCycle(adjacency, edge.BeforePackageId, edge.AfterPackageId))
+            if (TryFindCyclePath(adjacency, edge.BeforePackageId, edge.AfterPackageId, out var existingPath, cancellationToken))
             {
                 if (edge.IsHardConstraint)
-                    RecordHardCycle(edge, modById, hardCycles, cycleFindings);
+                {
+                    brokenEdges.Add(edge);
+                    RecordHardCycle(edge, existingPath, modById, hardCycles, cycleFindings);
+                }
                 else
-                    RecordSoftCycle(edge, modById, cycleFindings);
+                {
+                    droppedSoftEdges.Add(new DroppedSoftEdgeRecord(
+                        edge,
+                        $"软约束边与已有边构成环路 ({string.Join(" → ", existingPath)} → {edge.AfterPackageId})，已舍弃以保持DAG"));
+                }
                 continue;
             }
 
@@ -83,18 +110,18 @@ public static class TopologicalModSorter
 
         // 只有"硬约束"的入边才代表真正的上游依赖（About 强依赖 / DLL 引用 / loadAfter），
         // 把 XML 补丁目标、动态反射等软边计入会导致几乎所有模组都被误判为"前置框架"。
-        var hardDependentCount = ComputeHardDependentCounts(mods, activeEdges);
-        var assemblyReferencedBy = ComputeAssemblyReferencedBy(mods);
+        var hardDependentCount = ComputeHardDependentCounts(mods, activeEdges, cancellationToken);
+        var assemblyReferencedBy = ComputeAssemblyReferencedBy(mods, cancellationToken);
         var tiers = mods.ToDictionary(
             m => m.PackageId,
             m => ClassifyModArchitectureTier(m, hardDependentCount[m.PackageId], assemblyReferencedBy[m.PackageId]),
             StringComparer.OrdinalIgnoreCase);
 
-        var sorted = RunKahnWithPriority(mods, modById, adjacency, tiers);
+        var sorted = RunKahnWithPriority(mods, modById, adjacency, tiers, cancellationToken);
 
         var inversionCount = CountAdjacentTierInversions(sorted, tiers);
 
-        return new SortResult(sorted, activeEdges, hardCycles, cycleFindings, tiers, inversionCount);
+        return new SortResult(sorted, activeEdges, hardCycles, cycleFindings, tiers, inversionCount, brokenEdges, droppedSoftEdges);
     }
 
     /// <summary>
@@ -125,12 +152,14 @@ public static class TopologicalModSorter
 
     private static Dictionary<string, int> ComputeHardDependentCounts(
         IReadOnlyList<ModDescriptor> mods,
-        IReadOnlyList<OrderingEdge> edges)
+        IReadOnlyList<OrderingEdge> edges,
+        CancellationToken cancellationToken)
     {
         var counts = mods.ToDictionary(m => m.PackageId, _ => 0, StringComparer.OrdinalIgnoreCase);
 
         foreach (var edge in edges)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             if (!edge.IsHardConstraint)
                 continue;
 
@@ -146,13 +175,14 @@ public static class TopologicalModSorter
     /// 统计每个模组的程序集被多少个<b>其他</b>模组的程序集引用。
     /// 这是"框架 / API"最可靠的结构信号：别人编译时引用了你的 DLL，说明你提供的是代码底座。
     /// </summary>
-    private static Dictionary<string, int> ComputeAssemblyReferencedBy(IReadOnlyList<ModDescriptor> mods)
+    private static Dictionary<string, int> ComputeAssemblyReferencedBy(IReadOnlyList<ModDescriptor> mods, CancellationToken cancellationToken)
     {
         var counts = mods.ToDictionary(m => m.PackageId, _ => 0, StringComparer.OrdinalIgnoreCase);
 
         var modByAssembly = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         foreach (var mod in mods)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             foreach (var analysis in mod.AssemblyAnalyses)
             {
                 if (!string.IsNullOrWhiteSpace(analysis.AssemblyName))
@@ -162,6 +192,7 @@ public static class TopologicalModSorter
 
         foreach (var mod in mods)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var referenced = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
             foreach (var name in mod.ReferencedExternalAssemblies)
             {
@@ -183,50 +214,92 @@ public static class TopologicalModSorter
         IReadOnlyList<ModDescriptor> mods,
         Dictionary<string, ModDescriptor> modById,
         Dictionary<string, HashSet<string>> adjacency,
-        Dictionary<string, ModTierInfo> tiers)
+        Dictionary<string, ModTierInfo> tiers,
+        CancellationToken cancellationToken = default)
     {
-        var inDegree = mods.ToDictionary(m => m.PackageId, _ => 0, StringComparer.OrdinalIgnoreCase);
-        foreach (var (_, targets) in adjacency)
+        // 优先级序：分层 → 层内序号 → 原顺位 → Def 数 → PackageId（保证结果稳定可复现）
+        var priority = mods
+            .OrderBy(m => BuildPriority(m, tiers[m.PackageId]), PriorityComparer.Instance)
+            .ToList();
+
+        // 反向邻接表：prerequisite[x] = 必须先于 x 输出的模组集合，按优先级排好序。
+        // 只建一次，DFS 里直接取，避免每个节点都扫全表。
+        var rankById = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        for (var i = 0; i < priority.Count; i++)
+            rankById[priority[i].PackageId] = i;
+
+        var prerequisite = mods.ToDictionary(
+            m => m.PackageId,
+            _ => new List<string>(),
+            StringComparer.OrdinalIgnoreCase);
+
+        foreach (var (beforeId, targets) in adjacency)
         {
+            if (!prerequisite.ContainsKey(beforeId))
+                continue;
+
             foreach (var target in targets)
             {
-                if (inDegree.ContainsKey(target))
-                    inDegree[target]++;
+                if (prerequisite.TryGetValue(target, out var list))
+                    list.Add(beforeId);
             }
         }
 
-        var ready = new PriorityQueue<ModDescriptor, (int First, int Second, int Third, int Fourth, string Id)>();
-        foreach (var mod in mods)
-        {
-            if (inDegree[mod.PackageId] == 0)
-                ready.Enqueue(mod, BuildPriority(mod, tiers[mod.PackageId]));
-        }
+        foreach (var list in prerequisite.Values)
+            list.Sort((a, b) => rankById[a].CompareTo(rankById[b]));
 
         var sorted = new List<ModDescriptor>(mods.Count);
-        while (ready.Count > 0)
+        var emitted = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        // 显式栈实现 DFS，避免大清单下递归过深。
+        var stack = new Stack<(ModDescriptor Mod, int Next)>();
+        var onStack = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var seed in priority)
         {
-            var current = ready.Dequeue();
-            sorted.Add(current);
+            cancellationToken.ThrowIfCancellationRequested();
 
-            foreach (var nextId in adjacency[current.PackageId])
+            if (emitted.Contains(seed.PackageId))
+                continue;
+
+            stack.Push((seed, 0));
+            onStack.Add(seed.PackageId);
+
+            while (stack.Count > 0)
             {
-                if (!inDegree.TryGetValue(nextId, out var deg))
+                cancellationToken.ThrowIfCancellationRequested();
+
+                var (current, next) = stack.Pop();
+                var deps = prerequisite[current.PackageId];
+
+                // 还有未处理的前置：先把它自己压回栈，再压入下一个前置
+                var advanced = false;
+                while (next < deps.Count)
+                {
+                    var depId = deps[next];
+                    next++;
+                    if (emitted.Contains(depId) || onStack.Contains(depId))
+                        continue;
+
+                    stack.Push((current, next));
+                    stack.Push((modById[depId], 0));
+                    onStack.Add(depId);
+                    advanced = true;
+                    break;
+                }
+
+                if (advanced)
                     continue;
 
-                deg--;
-                inDegree[nextId] = deg;
-                if (deg != 0)
-                    continue;
-
-                var nextMod = modById[nextId];
-                ready.Enqueue(nextMod, BuildPriority(nextMod, tiers[nextId]));
+                onStack.Remove(current.PackageId);
+                if (emitted.Add(current.PackageId))
+                    sorted.Add(current);
             }
         }
 
         if (sorted.Count < mods.Count)
         {
-            // 理论上不会发生（图已被强制为 DAG），此处仅作为防御性兜底。
-            var emitted = new HashSet<string>(sorted.Select(s => s.PackageId), StringComparer.OrdinalIgnoreCase);
+            // 防御性兜底：图已被强制为 DAG，正常不会走到这里。
             var remaining = mods
                 .Where(m => !emitted.Contains(m.PackageId))
                 .OrderBy(m => tiers[m.PackageId].TierRank)
@@ -237,6 +310,27 @@ public static class TopologicalModSorter
 
         return sorted;
     }
+
+    private sealed class PriorityComparer : IComparer<(int First, int Second, int Third, int Fourth, string Id)>
+    {
+        public static readonly PriorityComparer Instance = new();
+
+        public int Compare(
+            (int First, int Second, int Third, int Fourth, string Id) x,
+            (int First, int Second, int Third, int Fourth, string Id) y)
+        {
+            var c = x.First.CompareTo(y.First);
+            if (c != 0) return c;
+            c = x.Second.CompareTo(y.Second);
+            if (c != 0) return c;
+            c = x.Third.CompareTo(y.Third);
+            if (c != 0) return c;
+            c = x.Fourth.CompareTo(y.Fourth);
+            if (c != 0) return c;
+            return string.CompareOrdinal(x.Id, y.Id);
+        }
+    }
+
     private static (int First, int Second, int Third, int Fourth, string Id) BuildPriority(
         ModDescriptor mod,
         ModTierInfo tier)
@@ -261,13 +355,19 @@ public static class TopologicalModSorter
 
     private static void RecordHardCycle(
         OrderingEdge edge,
+        IReadOnlyList<string> existingPath,
         Dictionary<string, ModDescriptor> modById,
         List<string> hardCycles,
         List<PairwiseConflictFinding> cycleFindings)
     {
         var modA = modById[edge.BeforePackageId];
         var modB = modById[edge.AfterPackageId];
-        var desc = $"检测到硬性排序循环依赖: {modA.Name} ({modA.PackageId}) → {modB.Name} ({modB.PackageId})，已断开该边以保证排序可解（{edge.Reason}）";
+
+        var pathDesc = existingPath.Count > 0
+            ? string.Join(" → ", existingPath) + $" → {modB.PackageId}"
+            : $"{modA.PackageId} → {modB.PackageId}";
+
+        var desc = $"检测到硬性排序循环依赖: {modA.Name} ({modA.PackageId}) → {modB.Name} ({modB.PackageId})，环路路径: {pathDesc}，已断开该边以保证排序可解（{edge.Reason}）";
 
         hardCycles.Add(desc);
         cycleFindings.Add(new PairwiseConflictFinding(
@@ -279,37 +379,10 @@ public static class TopologicalModSorter
             Category: "CyclicLoadOrderConstraint",
             TargetSignature: $"{modA.PackageId} <-> {modB.PackageId}",
             Summary: desc,
-            Evidence: new[] { edge.Reason },
+            Evidence: new[] { edge.Reason, $"环路路径: {pathDesc}" },
             RecommendedBeforePackageId: modB.PackageId,
             RecommendedAfterPackageId: modA.PackageId,
             RecommendationReason: "存在双向循环依赖，已自动断开后置边以保证拓扑可解；建议联系模组作者修正 About.xml 声明"));
-    }
-
-    /// <summary>
-    /// 软约束（HarmonyBefore/After、Transpiler 启发、XML 补丁目标等）与已生效的更强约束成环被拒。
-    /// 不影响排序可解性，但意味着最终顺序与该启发式建议相反，上报为黄色提示供用户复核。
-    /// </summary>
-    private static void RecordSoftCycle(
-        OrderingEdge edge,
-        Dictionary<string, ModDescriptor> modById,
-        List<PairwiseConflictFinding> cycleFindings)
-    {
-        var modA = modById[edge.BeforePackageId];
-        var modB = modById[edge.AfterPackageId];
-
-        cycleFindings.Add(new PairwiseConflictFinding(
-            ModAPackageId: modA.PackageId,
-            ModAName: modA.Name,
-            ModBPackageId: modB.PackageId,
-            ModBName: modB.Name,
-            Grade: ConflictGrade.Yellow,
-            Category: "SoftConstraintCycleDropped",
-            TargetSignature: $"{modA.PackageId} <-> {modB.PackageId}",
-            Summary: $"软约束 {modA.Name} → {modB.Name} 与已生效的更强约束成环，已舍弃该建议并按现有约束求解",
-            Evidence: new[] { edge.Reason },
-            RecommendedBeforePackageId: null,
-            RecommendedAfterPackageId: null,
-            RecommendationReason: "该启发式顺序与强约束（About 依赖 / DLL 引用）矛盾而被舍弃；如需该顺序请手动调整后复跑分析"));
     }
 
     /// <summary>
@@ -504,28 +577,36 @@ public static class TopologicalModSorter
     }
 
     /// <summary>
-    /// 判断加入 start → target 这条边是否会形成环（即 target 已能到达 start）。
+    /// 判断加入 start → target 这条边是否会形成环（即 target 是否已能到达 start）。
+    /// 若成环，通过 BFS parent 回溯提取一条 target 到 start 的完整路径并返回。
     /// </summary>
-    private static bool CreatesCycle(
+    private static bool TryFindCyclePath(
         Dictionary<string, HashSet<string>> adjacency,
         string startId,
-        string targetId)
+        string targetId,
+        out List<string> cyclePath,
+        CancellationToken cancellationToken)
     {
+        cyclePath = new List<string>();
+
         if (startId.Equals(targetId, StringComparison.OrdinalIgnoreCase))
+        {
+            cyclePath.Add(startId);
             return true;
+        }
 
-        if (!adjacency.TryGetValue(targetId, out var firstHop))
-            return false;
-
-        if (firstHop.Count == 0)
+        if (!adjacency.TryGetValue(targetId, out var firstHop) || firstHop.Count == 0)
             return false;
 
         var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { targetId };
+        var parent = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var queue = new Queue<string>();
         queue.Enqueue(targetId);
 
+        var found = false;
         while (queue.Count > 0)
         {
+            cancellationToken.ThrowIfCancellationRequested();
             var curr = queue.Dequeue();
             if (!adjacency.TryGetValue(curr, out var neighbors))
                 continue;
@@ -533,13 +614,39 @@ public static class TopologicalModSorter
             foreach (var next in neighbors)
             {
                 if (next.Equals(startId, StringComparison.OrdinalIgnoreCase))
-                    return true;
+                {
+                    parent[next] = curr;
+                    found = true;
+                    break;
+                }
 
                 if (visited.Add(next))
+                {
+                    parent[next] = curr;
                     queue.Enqueue(next);
+                }
             }
+
+            if (found)
+                break;
         }
 
-        return false;
+        if (!found)
+            return false;
+
+        // 回溯完整路径: targetId -> ... -> startId
+        var step = startId;
+        var reversedPath = new List<string> { step };
+        while (!step.Equals(targetId, StringComparison.OrdinalIgnoreCase))
+        {
+            if (!parent.TryGetValue(step, out var prev))
+                break;
+            reversedPath.Add(prev);
+            step = prev;
+        }
+
+        reversedPath.Reverse();
+        cyclePath = reversedPath;
+        return true;
     }
 }

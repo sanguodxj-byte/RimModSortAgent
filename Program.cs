@@ -14,12 +14,24 @@ public static class Program
     [STAThread]
     public static int Main(string[] args)
     {
+        var launchGui = args.Length == 0 || args.Any(a => a.Equals("--gui", StringComparison.OrdinalIgnoreCase));
+        if (!launchGui || args.Any(a => a.Equals("--selftest", StringComparison.OrdinalIgnoreCase)))
+            EnsureConsoleAttached();
+
         Console.OutputEncoding = Encoding.UTF8;
 
         if (args.Any(a => a.Equals("--selftest", StringComparison.OrdinalIgnoreCase)))
             return RunSelfTests();
 
-        var launchGui = args.Length == 0 || args.Any(a => a.Equals("--gui", StringComparison.OrdinalIgnoreCase));
+        ModSorterAgent.Verification.BridgeModActivator.RestoreStaleState();
+
+        if (args.Any(a => a.Equals("--check-bridge", StringComparison.OrdinalIgnoreCase)))
+            return RunBridgeCheck(args);
+
+        if (args.Any(a => a.Equals("--live-verify", StringComparison.OrdinalIgnoreCase)))
+            return RunAgentLiveVerify(args).GetAwaiter().GetResult();
+
+        launchGui = args.Length == 0 || args.Any(a => a.Equals("--gui", StringComparison.OrdinalIgnoreCase));
         string? autoScreenshotPath = null;
         var exitAfterScreenshot = false;
 
@@ -200,7 +212,28 @@ public static class Program
 
         if (!string.IsNullOrWhiteSpace(exportModsConfigPath))
         {
-            ModSortReportBuilder.ExportModsConfigXml(
+            var activeIds = report.SortedMods
+                .Where(m => m.IsActive)
+                .Select(m => m.PackageId)
+                .ToList();
+
+            var validation = ModSorterAgent.Sorting.SortOrderValidator.ValidateActiveModSet(activeIds, result);
+
+            if (!validation.IsValid)
+            {
+                var ex = new ModSorterAgent.Sorting.SortValidationException("导出 ModsConfig.xml 最终启用集合校验失败", validation);
+                Console.Error.WriteLine(ex.Message);
+                return 1;
+            }
+
+            var currentValidation = ProfileValidationService.ValidatePackageIds(activeIds, effectiveVersion);
+            if (!currentValidation.IsValid)
+            {
+                Console.Error.WriteLine(new ModSorterAgent.Sorting.SortValidationException(currentValidation.Result).Message);
+                return 1;
+            }
+
+            ModSortReportBuilder.ApplyModsConfigWithBackup(
                 exportModsConfigPath,
                 effectiveVersion,
                 report.SortedMods,
@@ -209,6 +242,14 @@ public static class Program
 
         if (!string.IsNullOrWhiteSpace(exportRmlPath))
         {
+            var activeIds = report.SortedMods.Where(m => m.IsActive).Select(m => m.PackageId).ToList();
+            var validation = ModSorterAgent.Sorting.SortOrderValidator.ValidateActiveModSet(activeIds, result);
+            if (!validation.IsValid)
+            {
+                Console.Error.WriteLine(new ModSorterAgent.Sorting.SortValidationException(validation).Message);
+                return 1;
+            }
+
             // 只导出启用项，和 ModsConfig.xml 的口径保持一致
             var entries = report.SortedMods
                 .Where(m => m.IsActive)
@@ -222,13 +263,143 @@ public static class Program
         return 0;
     }
 
+    /// <summary>
+    /// 不启动界面，跑完整的「分析 → 实机验证」链路：
+    /// 先按当前 ModsConfig.xml 做冲突分析，再把生效冲突交给实机验证逐条核验。
+    /// </summary>
+    private static async Task<int> RunAgentLiveVerify(string[] args)
+    {
+        var version = "1.7";
+        var maxConflicts = 0;
+        for (var i = 0; i < args.Length - 1; i++)
+        {
+            if (args[i].Equals("--game-version", StringComparison.OrdinalIgnoreCase))
+                version = args[i + 1];
+            if (args[i].Equals("--max-conflicts", StringComparison.OrdinalIgnoreCase) &&
+                int.TryParse(args[i + 1], out var parsed) && parsed > 0)
+                maxConflicts = parsed;
+        }
+
+        Console.WriteLine("正在分析当前加载顺序…");
+        var resolver = new ModListResolver();
+        var (detectedVersion, activeMods, expansions) = resolver.ParseModsConfigFile(ModListResolver.DefaultModsConfigPath);
+        var effectiveVersion = string.IsNullOrWhiteSpace(detectedVersion) ? version : detectedVersion;
+
+        var pipeline = new ModSortPipelineService();
+        var analysis = pipeline.Run(new PipelineRequest(
+            ModTokens: activeMods,
+            TargetGameVersion: effectiveVersion,
+            KnownExpansions: expansions,
+            VerifyWithGabs: false,
+            ModsConfigPath: ModListResolver.DefaultModsConfigPath,
+            IncludeWorkshopSubscriptions: false,
+            WorkshopContentDirectory: null));
+
+        var conflicts = ModSorterAgent.Reporting.ConflictNarrative.Build(analysis.Report);
+
+        var effective = new HashSet<string>(
+            analysis.Report.SortedMods.Where(m => m.IsActive).Select(m => m.PackageId),
+            StringComparer.OrdinalIgnoreCase);
+
+        var scoped = conflicts
+            .GroupBy(c => c.Key, StringComparer.OrdinalIgnoreCase)
+            .Select(g => g.First())
+            .Where(c => c.Grade != ModSorterAgent.Models.ConflictGrade.Green)
+            .Where(c => c.Grade == ModSorterAgent.Models.ConflictGrade.Purple
+                ? effective.Contains(c.ModAPackageId) && effective.Contains(c.ModBPackageId)
+                : c.Category.Equals("MissingDependency", StringComparison.Ordinal)
+                    ? effective.Contains(c.ModAPackageId)
+                    : effective.Contains(c.ModAPackageId) && effective.Contains(c.ModBPackageId))
+            .OrderByDescending(c => c.Grade)
+            .ToList();
+
+        Console.WriteLine($"  模组 {analysis.Report.SortedMods.Count} 项，待核验冲突 {scoped.Count} 项");
+
+        if (maxConflicts > 0 && scoped.Count > maxConflicts)
+        {
+            scoped = scoped.Take(maxConflicts).ToList();
+            Console.WriteLine($"  （本次只核验前 {maxConflicts} 项）");
+        }
+
+        var settings = ModSorterAgent.Agent.AgentConfigLoader.Load(
+            new ModSorterAgent.Services.SettingsStore().Current);
+        if (!settings.IsConfigured)
+        {
+            Console.WriteLine("未配置模型接口，实机核查需要 Agent 全权操作游戏。请在界面「设置」中配置。");
+            return 2;
+        }
+
+        using var investigator = new ModSorterAgent.Agent.AgentInvestigator(
+            settings,
+            analysis.Mods,
+            ModListResolver.PathOptions.RimWorldInstallDir,
+            text => Console.WriteLine("    " + text),
+            enableGabsTools: true);
+
+        var progress = new Progress<(int Done, int Total, string Label)>(p =>
+            Console.WriteLine($"  [{p.Done}/{p.Total}] {p.Label}"));
+
+        var reports = await investigator.InvestigateAllAsync(
+            scoped,
+            progress,
+            CancellationToken.None,
+            useModel: true);
+
+        Console.WriteLine();
+        foreach (var report in reports)
+        {
+            Console.WriteLine($"· {report.ConflictKey}");
+            Console.WriteLine($"  结论：{report.VerdictLabel}（置信度 {report.Confidence:P0}）");
+            Console.WriteLine($"  {report.Headline}");
+            if (!string.IsNullOrWhiteSpace(report.Explanation))
+                Console.WriteLine($"  {report.Explanation}");
+            Console.WriteLine();
+        }
+
+        return 0;
+    }
+
+    /// <summary>
+    /// 实机工具链自检：只报告 GABS 与桥接模组是否存在于磁盘。
+    /// 不依据版本号判断能否加载——模组版本号无意义，能否生效只看实际加载结果。
+    /// </summary>
+    private static int RunBridgeCheck(string[] args)
+    {
+        var gabs = ModSorterAgent.Agent.AgentGabsTools.ResolveGabsExePath();
+        Console.WriteLine($"GABS     : {gabs} ({(File.Exists(gabs) ? "存在" : "缺失")})");
+
+        var bridgeDir = ModSorterAgent.Verification.BridgeModLocator.FindBridgeModDirectory();
+        Console.WriteLine($"桥接模组 : {bridgeDir ?? "(未找到)"}");
+
+        if (!File.Exists(gabs))
+        {
+            Console.WriteLine();
+            Console.WriteLine("缺少 GABS，实机操作不可用。");
+            return 1;
+        }
+
+        if (bridgeDir == null)
+        {
+            Console.WriteLine();
+            Console.WriteLine("未找到 RimBridgeServer 模组，实机桥接无法建立。");
+            return 1;
+        }
+
+        return 0;
+    }
+
     /// <summary>检测器的合成夹具自检：全绿才说明"该报的报、不该报的不报"。</summary>
     private static int RunSelfTests()
     {
         var suites = new (string Name, Func<IReadOnlyList<string>> Run)[]
         {
             ("XmlCrossReferenceAnalyzer", ModSorterAgent.Analysis.XmlCrossReferenceSelfTest.Run),
-            ("TopologicalModSorter", ModSorterAgent.Sorting.TopologicalSortSelfTest.Run)
+            ("TopologicalModSorter", ModSorterAgent.Sorting.TopologicalSortSelfTest.Run),
+            ("ProfileValidation", ModSorterAgent.Services.ProfileValidationSelfTest.Run),
+            ("LiveVerification", ModSorterAgent.Analysis.LiveVerificationSelfTest.Run),
+            ("BundledBridge", ModSorterAgent.Verification.BundledBridgeSelfTest.Run),
+            ("AgentConfig", ModSorterAgent.Agent.AgentConfigSelfTest.Run),
+            ("AgentConsole", ModSorterAgent.UI.AgentConsoleSelfTest.Run)
         };
 
         var failed = 0;
@@ -249,5 +420,34 @@ public static class Program
 
         Console.WriteLine(failed == 0 ? "自检全部通过。" : $"自检失败：{failed}/{suites.Length} 套。");
         return failed == 0 ? 0 : 1;
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool AttachConsole(int dwProcessId);
+
+    private const int ATTACH_PARENT_PROCESS = -1;
+
+    /// <summary>
+    /// 当程序以 WinExe（纯图形界面）模式构建时，Windows 默认不为进程分配黑框控制台。
+    /// 当从终端运行 --selftest 或 CLI 参数时，调用 AttachConsole 挂靠到调用方的父控制台，
+    /// 并重设标准输出流，保证终端能正常看到输出。
+    /// </summary>
+    private static void EnsureConsoleAttached()
+    {
+        if (AttachConsole(ATTACH_PARENT_PROCESS))
+        {
+            var stdOut = Console.OpenStandardOutput();
+            if (stdOut != Stream.Null)
+            {
+                var writer = new StreamWriter(stdOut, Encoding.UTF8) { AutoFlush = true };
+                Console.SetOut(writer);
+            }
+            var stdErr = Console.OpenStandardError();
+            if (stdErr != Stream.Null)
+            {
+                var errWriter = new StreamWriter(stdErr, Encoding.UTF8) { AutoFlush = true };
+                Console.SetError(errWriter);
+            }
+        }
     }
 }

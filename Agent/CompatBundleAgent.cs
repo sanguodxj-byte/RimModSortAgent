@@ -29,7 +29,9 @@ public sealed class CompatBundleAgent
         IProgress<(int Done, int Total, string Label)>? progress = null,
         CancellationToken cancellationToken = default,
         Action<AgentReport>? onReport = null,
-        IReadOnlySet<string>? approvedAuthorDeclared = null)
+        IReadOnlySet<string>? approvedAuthorDeclared = null,
+        IAgentLiveSink? liveSink = null,
+        string? liveTitle = null)
     {
         var skipped = new List<CompatPatchSkip>();
         var candidates = new List<PlayerConflict>();
@@ -54,40 +56,46 @@ public sealed class CompatBundleAgent
         var entries = new List<CompatPatchEntry>();
         var reports = new List<AgentReport>();
 
-        for (var i = 0; i < candidates.Count; i++)
+        // 把过程接到 Agent 窗口：推理、工具调用、逐条结论实时可见。
+        var previousSink = _investigator.LiveSink;
+        if (liveSink != null)
+            _investigator.LiveSink = liveSink;
+
+        if (liveSink != null && !string.IsNullOrWhiteSpace(liveTitle))
+            liveSink.Begin(liveTitle, candidates.Count);
+
+        try
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            var conflict = candidates[i];
-            progress?.Report((i, candidates.Count, $"核查 {conflict.PairLabel}"));
-
-            AgentReport report;
-            try
+            for (var i = 0; i < candidates.Count; i++)
             {
-                report = await _investigator.InvestigateAsync(conflict, cancellationToken)
+                cancellationToken.ThrowIfCancellationRequested();
+                var conflict = candidates[i];
+                progress?.Report((i, candidates.Count, $"核查 {conflict.PairLabel}"));
+                liveSink?.BeginConflict(conflict, i, candidates.Count);
+
+                // 严禁兜底：API 异常直接向外抛出，立即中断并报错，禁止跳过或捕获
+                var report = await _investigator.InvestigateAsync(conflict, cancellationToken)
                     .ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                skipped.Add(new CompatPatchSkip(conflict, "Agent 核查失败：" + ex.Message));
-                progress?.Report((i + 1, candidates.Count, $"失败 {conflict.PairLabel}"));
-                continue;
+
+                reports.Add(report);
+                onReport?.Invoke(report);
+                liveSink?.ConflictCompleted(conflict, report);
+
+                if (CompatPatchEligibility.CanBundle(conflict, report, approvedAuthorDeclared))
+                    entries.Add(new CompatPatchEntry(conflict, report));
+                else
+                    skipped.Add(new CompatPatchSkip(
+                        conflict,
+                        CompatPatchEligibility.ExplainNotEligible(conflict, report, approvedAuthorDeclared)));
+
+                progress?.Report((i + 1, candidates.Count, $"完成 {conflict.PairLabel}"));
             }
 
-            reports.Add(report);
-            onReport?.Invoke(report);
-
-            if (CompatPatchEligibility.CanBundle(conflict, report, approvedAuthorDeclared))
-                entries.Add(new CompatPatchEntry(conflict, report));
-            else
-                skipped.Add(new CompatPatchSkip(
-                    conflict,
-                    CompatPatchEligibility.ExplainNotEligible(conflict, report, approvedAuthorDeclared)));
-
-            progress?.Report((i + 1, candidates.Count, $"完成 {conflict.PairLabel}"));
+            liveSink?.End(reports);
+        }
+        finally
+        {
+            _investigator.LiveSink = previousSink;
         }
 
         return new CompatBundleWork(entries, skipped, reports);
@@ -131,24 +139,12 @@ public sealed class CompatBundleAgent
                 var entry = entries[index];
                 status?.Invoke($"修复编译错误：{entry.Conflict.PairLabel}（{round}/{maxRepairRounds}）");
 
-                AgentReport? repaired;
-                try
-                {
-                    repaired = await _investigator.RepairHarmonyPlanAsync(
-                        entry.Conflict,
-                        entry.Report,
-                        failure.CompilerOutput,
-                        cancellationToken).ConfigureAwait(false);
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    status?.Invoke($"修复未完成：{entry.Conflict.PairLabel} · {ex.Message}");
-                    continue;
-                }
+                // 严禁兜底：API 异常直接向外抛出，立即中断并报错
+                var repaired = await _investigator.RepairHarmonyPlanAsync(
+                    entry.Conflict,
+                    entry.Report,
+                    failure.CompilerOutput,
+                    cancellationToken).ConfigureAwait(false);
 
                 if (repaired == null ||
                     string.Equals(

@@ -7,7 +7,8 @@ using System.Text.Json.Nodes;
 namespace ModSorterAgent.Agent;
 
 /// <summary>
-/// 最小 LLM 客户端：OpenAI 兼容 /chat/completions 与 Anthropic /v1/messages。
+/// 最小 LLM 客户端：只走 OpenAI 兼容 /chat/completions。
+/// Player2 也复用这条路径——它同样是 Bearer 鉴权，但由服务端选定模型，故不下发 model 字段。
 /// 只负责"发提示词、拿回文本"，结构化解析交给 <see cref="AgentInvestigator"/>。
 /// </summary>
 public sealed class AgentClient : IDisposable
@@ -20,6 +21,9 @@ public sealed class AgentClient : IDisposable
 
     private readonly HttpClient _http;
     private readonly bool _ownsHttp;
+    private string? _resolvedKey;
+    private Player2AuthService.LocalRoute? _player2Route;
+    private bool _player2RouteResolved;
 
     public AgentConfig Config { get; }
 
@@ -35,9 +39,7 @@ public sealed class AgentClient : IDisposable
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(3));
 
-        return Config.IsAnthropic
-            ? await CompleteAnthropicAsync(prompt, timeout.Token).ConfigureAwait(false)
-            : await CompleteOpenAiAsync(prompt, timeout.Token).ConfigureAwait(false);
+        return await CompleteOpenAiAsync(prompt, timeout.Token).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -56,25 +58,40 @@ public sealed class AgentClient : IDisposable
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         timeout.CancelAfter(TimeSpan.FromMinutes(5));
 
-        return Config.IsAnthropic
-            ? await CompleteAnthropicWithToolsAsync(prompt, tools, executeTool, timeout.Token).ConfigureAwait(false)
-            : await CompleteOpenAiWithToolsAsync(prompt, tools, executeTool, timeout.Token).ConfigureAwait(false);
+        return await CompleteOpenAiWithToolsAsync(prompt, tools, executeTool, timeout.Token).ConfigureAwait(false);
+    }
+
+    /// <summary>
+    /// 同上，但把每一轮的推理正文与工具调用实时回调出去，供 Agent 窗口展示过程。
+    /// 没有推理文本的轮次不会触发 onReasoning。
+    /// </summary>
+    public async Task<string> CompleteWithToolsAsync(
+        string prompt,
+        IReadOnlyList<AgentToolDefinition> tools,
+        Func<AgentToolCall, CancellationToken, Task<string>> executeTool,
+        Action<string>? onReasoning,
+        Action<AgentToolCall>? onToolCall,
+        CancellationToken cancellationToken)
+    {
+        if (tools.Count == 0)
+            return await CompleteAsync(prompt, cancellationToken).ConfigureAwait(false);
+
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(TimeSpan.FromMinutes(5));
+
+        return await CompleteOpenAiWithToolsAsync(prompt, tools, executeTool, onReasoning, onToolCall, timeout.Token)
+            .ConfigureAwait(false);
     }
 
     private async Task<string> CompleteOpenAiAsync(string prompt, CancellationToken cancellationToken)
     {
-        var body = new
+        var body = BuildChatBody(new object[]
         {
-            model = Config.Model,
-            temperature = 0.1,
-            messages = new object[]
-            {
-                new { role = "system", content = SystemPrompt },
-                new { role = "user", content = prompt }
-            }
-        };
+            new { role = "system", content = SystemPrompt },
+            new { role = "user", content = prompt }
+        });
 
-        using var response = await PostJsonAsync(Endpoint(), body, cancellationToken, anthropic: false)
+        using var response = await PostJsonAsync(body, cancellationToken)
             .ConfigureAwait(false);
         var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
@@ -85,10 +102,19 @@ public sealed class AgentClient : IDisposable
         return ExtractOpenAiContent(doc);
     }
 
+    private Task<string> CompleteOpenAiWithToolsAsync(
+        string prompt,
+        IReadOnlyList<AgentToolDefinition> tools,
+        Func<AgentToolCall, CancellationToken, Task<string>> executeTool,
+        CancellationToken cancellationToken)
+        => CompleteOpenAiWithToolsAsync(prompt, tools, executeTool, null, null, cancellationToken);
+
     private async Task<string> CompleteOpenAiWithToolsAsync(
         string prompt,
         IReadOnlyList<AgentToolDefinition> tools,
         Func<AgentToolCall, CancellationToken, Task<string>> executeTool,
+        Action<string>? onReasoning,
+        Action<AgentToolCall>? onToolCall,
         CancellationToken cancellationToken)
     {
         var messages = new List<object>
@@ -113,11 +139,11 @@ public sealed class AgentClient : IDisposable
             if (finalRound)
                 messages.Add(new { role = "user", content = FinalRoundNudge });
 
-            object body = finalRound
-                ? new { model = Config.Model, temperature = 0.1, messages }
-                : new { model = Config.Model, temperature = 0.1, messages, tools = toolSpecs, tool_choice = "auto" };
+            var body = finalRound
+                ? BuildChatBody(messages)
+                : BuildChatBody(messages, toolSpecs);
 
-            using var response = await PostJsonAsync(Endpoint(), body, cancellationToken, anthropic: false)
+            using var response = await PostJsonAsync(body, cancellationToken)
                 .ConfigureAwait(false);
             var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
 
@@ -139,9 +165,16 @@ public sealed class AgentClient : IDisposable
                 ? contentElement.GetString() ?? string.Empty
                 : string.Empty;
 
-            if (!message.TryGetProperty("tool_calls", out var toolCalls) ||
-                toolCalls.ValueKind != JsonValueKind.Array ||
-                toolCalls.GetArrayLength() == 0)
+            var hasToolCalls = message.TryGetProperty("tool_calls", out var toolCalls) &&
+                               toolCalls.ValueKind == JsonValueKind.Array &&
+                               toolCalls.GetArrayLength() > 0;
+
+            // 最终结论是返回给程序解析的内部 JSON 报文（包含 verdict、hidden_risks、patch_plan 等），
+            // 严禁作为「模型推理文本」直接在界面上暴露；只有伴随工具调用的自然语言思考才对外广播。
+            if (hasToolCalls && !string.IsNullOrWhiteSpace(content) && !IsStructuredJsonPayload(content))
+                onReasoning?.Invoke(content);
+
+            if (!hasToolCalls)
                 return content;
 
             if (finalRound)
@@ -164,10 +197,16 @@ public sealed class AgentClient : IDisposable
                 pendingCalls.Add(new AgentToolCall(id, name, arguments));
             }
 
-            messages.Add(new { role = "assistant", content, tool_calls = callRecords });
+            // Player2 后端转接 Claude/Vertex 时，若带 tool_calls 的 assistant 消息包含非空正文，
+            // 会被后端拆成尾随的 assistant 块，导致后续请求被 Vertex 判定为 assistant message prefill 而报 400。
+            // 推理正文已在上方通过 onReasoning 传给界面展示，写回历史记录时 Player2 使用空串。
+            var assistantContent = Config.IsPlayer2 ? "" : content;
+            messages.Add(new { role = "assistant", content = assistantContent, tool_calls = callRecords });
 
             foreach (var pending in pendingCalls)
             {
+                onToolCall?.Invoke(pending);
+
                 var result = await ExecuteToolSafeAsync(executeTool, pending, cancellationToken)
                     .ConfigureAwait(false);
                 messages.Add(new { role = "tool", tool_call_id = pending.Id, content = result });
@@ -177,141 +216,82 @@ public sealed class AgentClient : IDisposable
         throw new AgentToolException("模型没有返回最终结论。");
     }
 
-    private async Task<string> CompleteAnthropicAsync(string prompt, CancellationToken cancellationToken)
+    /// <summary>
+    /// 组装 OpenAI 兼容请求体。模型名为空时不下发 model 字段——
+    /// Player2 由服务端选定模型，带上空模型名会被拒。
+    /// </summary>
+    private Dictionary<string, object?> BuildChatBody(IReadOnlyList<object> messages, object[]? tools = null)
     {
-        var body = new
+        var body = new Dictionary<string, object?>(StringComparer.Ordinal)
         {
-            model = Config.Model,
-            max_tokens = 8192,
-            temperature = 0.1,
-            system = SystemPrompt,
-            messages = new object[] { new { role = "user", content = prompt } }
+            ["temperature"] = 0.1,
+            ["messages"] = messages
         };
 
-        using var response = await PostJsonAsync(Endpoint(), body, cancellationToken, anthropic: true)
-            .ConfigureAwait(false);
-        var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(Config.Model))
+            body["model"] = Config.Model;
 
-        if (!response.IsSuccessStatusCode)
-            throw new AgentApiException(response.StatusCode, ShortBody(text));
-
-        using var doc = JsonDocument.Parse(text);
-        return ExtractAnthropicText(doc);
-    }
-
-    private async Task<string> CompleteAnthropicWithToolsAsync(
-        string prompt,
-        IReadOnlyList<AgentToolDefinition> tools,
-        Func<AgentToolCall, CancellationToken, Task<string>> executeTool,
-        CancellationToken cancellationToken)
-    {
-        var messages = new List<object> { new { role = "user", content = prompt } };
-        var toolSpecs = tools.Select(t => new
+        if (tools is { Length: > 0 })
         {
-            name = t.Name,
-            description = t.Description,
-            input_schema = JsonNode.Parse(t.ParametersJson)
-        }).ToArray();
-
-        for (var round = 0; round <= MaxToolRounds; round++)
-        {
-            var finalRound = round == MaxToolRounds;
-            if (finalRound)
-                messages.Add(new { role = "user", content = FinalRoundNudge });
-
-            object body = finalRound
-                ? new { model = Config.Model, max_tokens = 8192, temperature = 0.1, system = SystemPrompt, messages }
-                : new { model = Config.Model, max_tokens = 8192, temperature = 0.1, system = SystemPrompt, messages, tools = toolSpecs };
-
-            using var response = await PostJsonAsync(Endpoint(), body, cancellationToken, anthropic: true)
-                .ConfigureAwait(false);
-            var text = await response.Content.ReadAsStringAsync(cancellationToken).ConfigureAwait(false);
-
-            if (!response.IsSuccessStatusCode)
-            {
-                if (round == 0 && IsToolsUnsupported(response.StatusCode))
-                    throw new AgentToolsUnsupportedException(response.StatusCode, ShortBody(text));
-
-                throw new AgentApiException(response.StatusCode, ShortBody(text));
-            }
-
-            using var doc = JsonDocument.Parse(text);
-            if (!doc.RootElement.TryGetProperty("content", out var blocks) ||
-                blocks.ValueKind != JsonValueKind.Array)
-                throw new AgentApiException(response.StatusCode, "响应中没有 content 字段");
-
-            var toolUses = blocks.EnumerateArray()
-                .Where(b => GetString(b, "type").Equals("tool_use", StringComparison.Ordinal))
-                .ToList();
-
-            if (toolUses.Count == 0)
-                return JoinAnthropicText(blocks);
-
-            if (finalRound)
-                throw new AgentToolException("模型在最终轮仍请求工具调用，未能给出结论。");
-
-            var assistantBlocks = new List<object>();
-            var pendingCalls = new List<AgentToolCall>();
-            foreach (var block in blocks.EnumerateArray())
-            {
-                var type = GetString(block, "type");
-                if (type == "text")
-                {
-                    assistantBlocks.Add(new { type = "text", text = GetString(block, "text") });
-                }
-                else if (type == "tool_use")
-                {
-                    var id = GetString(block, "id");
-                    var name = GetString(block, "name");
-                    var input = block.TryGetProperty("input", out var inputElement) ? inputElement : default;
-                    var arguments = input.ValueKind == JsonValueKind.Undefined ? "{}" : input.GetRawText();
-                    assistantBlocks.Add(new
-                    {
-                        type = "tool_use",
-                        id,
-                        name,
-                        input = JsonNode.Parse(arguments)
-                    });
-                    pendingCalls.Add(new AgentToolCall(id, name, arguments));
-                }
-            }
-
-            messages.Add(new { role = "assistant", content = assistantBlocks });
-
-            var results = new List<object>();
-            foreach (var pending in pendingCalls)
-            {
-                var result = await ExecuteToolSafeAsync(executeTool, pending, cancellationToken)
-                    .ConfigureAwait(false);
-                results.Add(new { type = "tool_result", tool_use_id = pending.Id, content = result });
-            }
-
-            messages.Add(new { role = "user", content = results });
+            body["tools"] = tools;
+            body["tool_choice"] = "auto";
         }
 
-        throw new AgentToolException("模型没有返回最终结论。");
+        return body;
+    }
+
+    /// <summary>
+    /// 解析 Player2 的连接方式：优先本地客户端（连端点带凭据一起拿到），
+    /// 否则用配置里的远程地址与网页密钥。结果在本实例内缓存，工具循环每轮不重复探测。
+    /// </summary>
+    private async Task<Player2AuthService.LocalRoute?> ResolvePlayer2RouteAsync(CancellationToken cancellationToken)
+    {
+        if (_player2RouteResolved)
+            return _player2Route;
+
+        _player2RouteResolved = true;
+        _player2Route = await Player2AuthService.TryResolveLocalAsync(cancellationToken).ConfigureAwait(false);
+        return _player2Route;
+    }
+
+    private async Task<string> ResolveApiKeyAsync(CancellationToken cancellationToken)
+    {
+        if (_resolvedKey != null)
+            return _resolvedKey;
+
+        if (Config.IsPlayer2)
+        {
+            var route = await ResolvePlayer2RouteAsync(cancellationToken).ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(route?.ApiKey))
+                return _resolvedKey = route!.ApiKey;
+
+            if (!string.IsNullOrWhiteSpace(Config.ApiKey))
+                return _resolvedKey = Config.ApiKey;
+
+            throw new AgentApiException(
+                System.Net.HttpStatusCode.Unauthorized,
+                "Player2 未提供凭据：本地客户端未运行，设置里也没有网页密钥。可在设置中发起网页鉴权。");
+        }
+
+        return _resolvedKey = Config.ApiKey;
     }
 
     private async Task<HttpResponseMessage> PostJsonAsync(
-        string endpoint,
         object body,
-        CancellationToken cancellationToken,
-        bool anthropic)
+        CancellationToken cancellationToken)
     {
-        using var request = new HttpRequestMessage(HttpMethod.Post, endpoint)
+        var apiKey = await ResolveApiKeyAsync(cancellationToken).ConfigureAwait(false);
+
+        using var request = new HttpRequestMessage(HttpMethod.Post, Endpoint())
         {
             Content = new StringContent(JsonSerializer.Serialize(body, JsonOptions), Encoding.UTF8, "application/json")
         };
 
-        if (anthropic)
-        {
-            request.Headers.TryAddWithoutValidation("x-api-key", Config.ApiKey);
-            request.Headers.TryAddWithoutValidation("anthropic-version", "2023-06-01");
-        }
-        else
-        {
-            request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Config.ApiKey);
-        }
+        request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", apiKey);
+
+        // Player2 靠这个头把用量归到对应的客户端标识上，缺了会被当成未登记来源。
+        if (Config.IsPlayer2)
+            request.Headers.TryAddWithoutValidation("player2-game-key", Player2AuthService.GameClientId);
 
         return await _http.SendAsync(request, HttpCompletionOption.ResponseContentRead, cancellationToken)
             .ConfigureAwait(false);
@@ -357,34 +337,10 @@ public sealed class AgentClient : IDisposable
             : string.Empty;
     }
 
-    private static string ExtractAnthropicText(JsonDocument doc)
-    {
-        if (!doc.RootElement.TryGetProperty("content", out var blocks) || blocks.ValueKind != JsonValueKind.Array)
-            throw new AgentApiException(HttpStatusCode.OK, "响应中没有 content 字段");
-
-        return JoinAnthropicText(blocks);
-    }
-
-    private static string JoinAnthropicText(JsonElement blocks)
-    {
-        var builder = new StringBuilder();
-        foreach (var block in blocks.EnumerateArray())
-        {
-            if (GetString(block, "type") == "text")
-                builder.Append(GetString(block, "text"));
-        }
-
-        return builder.ToString();
-    }
-
     private string Endpoint()
     {
-        var baseUrl = Config.BaseUrl.TrimEnd('/');
-        if (Config.IsAnthropic)
-            return baseUrl.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
-                ? $"{baseUrl}/messages"
-                : $"{baseUrl}/v1/messages";
-
+        // 本地客户端可用时走它自己的端点，否则用配置地址（Player2 默认远程接口）。
+        var baseUrl = (_player2Route?.BaseUrl ?? Config.BaseUrl).TrimEnd('/');
         return baseUrl.EndsWith("/v1", StringComparison.OrdinalIgnoreCase)
             ? $"{baseUrl}/chat/completions"
             : $"{baseUrl}/v1/chat/completions";
@@ -395,7 +351,14 @@ public sealed class AgentClient : IDisposable
         if (string.IsNullOrWhiteSpace(body))
             return "（空响应）";
         var trimmed = body.Trim();
-        return trimmed.Length <= 300 ? trimmed : trimmed[..300] + "…";
+        return trimmed.Length <= 2000 ? trimmed : trimmed[..2000] + "…";
+    }
+
+    private static bool IsStructuredJsonPayload(string text)
+    {
+        var trimmed = text.Trim();
+        return (trimmed.StartsWith('{') && trimmed.Contains("\"verdict\"")) ||
+               (trimmed.StartsWith("```") && trimmed.Contains("\"verdict\""));
     }
 
     /// <summary>从模型输出中抓出第一个完整 JSON 对象（容忍 Markdown 围栏与前后废话）。</summary>

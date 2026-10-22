@@ -52,6 +52,11 @@ internal static class UiTheme
     public static readonly Color ScrollThumb = Color.FromArgb(62, 72, 90);
     public static readonly Color ScrollThumbHover = Color.FromArgb(86, 99, 122);
 
+    // 按钮"暗"态：底片比标题栏更沉、文字与边框一起降对比，与"亮"态拉开亮度差
+    public static readonly Color DisabledFill = Color.FromArgb(15, 18, 24);
+    public static readonly Color DisabledBorder = Color.FromArgb(27, 32, 41);
+    public static readonly Color DisabledText = Color.FromArgb(82, 92, 108);
+
     // 设置窗口专用层级：导航栏比正文更沉，输入框比卡片更亮
     public static readonly Color NavBg = Color.FromArgb(15, 18, 25);
     public static readonly Color NavHoverBg = Color.FromArgb(23, 28, 38);
@@ -77,6 +82,7 @@ internal static class UiTheme
     public static readonly Font MetricValueFont = new("Microsoft YaHei UI", 15.0f, FontStyle.Bold);
     public static readonly Font MetricValueSmallFont = new("Microsoft YaHei UI", 11.0f, FontStyle.Bold);
     public static readonly Font MonoFont = new("Consolas", 8.8f, FontStyle.Regular);
+    public static readonly Font MonoBoldFont = new("Consolas", 8.8f, FontStyle.Bold);
     public static readonly Font MonoSmallFont = new("Consolas", 8.2f, FontStyle.Regular);
 
     public static (Color Accent, Color PillBg, Color PillText, string ShortLabel) GradeStyle(Models.ConflictGrade grade)

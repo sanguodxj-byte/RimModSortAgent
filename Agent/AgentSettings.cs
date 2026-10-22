@@ -1,4 +1,4 @@
-using System.Runtime.InteropServices;
+﻿using System.Runtime.InteropServices;
 using System.Text;
 using ModSorterAgent.Services;
 
@@ -10,15 +10,21 @@ public sealed record AgentConfig(
     string Model,
     string ApiKey)
 {
-    public bool IsConfigured =>
-        !string.IsNullOrWhiteSpace(BaseUrl) &&
-        !string.IsNullOrWhiteSpace(Model) &&
-        !string.IsNullOrWhiteSpace(ApiKey);
+    /// <summary>Player2 由服务端选定模型，不需要模型名。</summary>
+    public bool IsPlayer2 => Provider.Equals("player2", StringComparison.OrdinalIgnoreCase);
 
-    public bool IsAnthropic => Provider.Equals("anthropic", StringComparison.OrdinalIgnoreCase);
+    /// <summary>
+    /// Player2 选中即可用：凭据由本地客户端自动换取，换不到时再走网页鉴权，
+    /// 因此不要求用户预先填写任何字段；其它提供方仍需地址、模型与密钥齐备。
+    /// </summary>
+    public bool IsConfigured =>
+        IsPlayer2 ||
+        (!string.IsNullOrWhiteSpace(BaseUrl) &&
+         !string.IsNullOrWhiteSpace(Model) &&
+         !string.IsNullOrWhiteSpace(ApiKey));
 
     public string DisplayName => IsConfigured
-        ? $"{Provider} · {Model}"
+        ? string.IsNullOrWhiteSpace(Model) ? Provider : $"{Provider} · {Model}"
         : "本地代码核查";
 }
 
@@ -41,11 +47,19 @@ public static class AgentConfigLoader
 
         provider = string.IsNullOrWhiteSpace(provider) ? "off" : provider.Trim().ToLowerInvariant();
 
+        // Anthropic 地址，表现为一次静默的 401。直接归到本地核查，让用户重新选择。
+        if (provider == "anthropic")
+            provider = "off";
+
         if (provider == "off")
             return new AgentConfig("off", string.Empty, string.Empty, string.Empty);
 
         baseUrl = string.IsNullOrWhiteSpace(baseUrl)
-            ? provider == "anthropic" ? "https://api.anthropic.com" : "https://api.openai.com/v1"
+            ? provider switch
+            {
+                "player2" => "https://api.player2.game/v1",
+                _ => "https://api.openai.com/v1"
+            }
             : baseUrl.Trim().TrimEnd('/');
 
         return new AgentConfig(provider, baseUrl, model?.Trim() ?? string.Empty, apiKey ?? string.Empty);

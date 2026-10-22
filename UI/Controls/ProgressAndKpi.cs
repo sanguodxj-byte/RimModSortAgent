@@ -290,7 +290,8 @@ internal sealed class KpiStrip : Control
             $"占总数 {report.GreenModCount * 100 / total}%", UiTheme.Green, report.GreenModCount.ToString());
 
         DrawCard(g, rects[2], 2, "2.黄色 · 代码存疑", report.YellowModCount.ToString(),
-            $"占总数 {report.YellowModCount * 100 / total}%", UiTheme.Amber, report.YellowModCount.ToString());
+            $"占总数 {report.YellowModCount * 100 / total}% · {report.ConflictFindings.Count(f => f.Grade == ConflictGrade.Yellow)} 对",
+            UiTheme.Amber, report.YellowModCount.ToString());
 
         DrawCard(g, rects[3], 3, "3.红色 · 明确冲突", report.RedModCount.ToString(),
             $"占总数 {report.RedModCount * 100 / total}% · {report.ConflictFindings.Count(f => f.Grade == ConflictGrade.Red)} 对",

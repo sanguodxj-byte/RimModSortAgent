@@ -1,4 +1,4 @@
-using System.Xml.Linq;
+﻿using System.Xml.Linq;
 using ModSorterAgent.Agent;
 
 namespace ModSorterAgent.Patching;
@@ -11,7 +11,6 @@ public sealed record CompatInstallResult(
     IReadOnlyList<string> Warnings);
 
 /// <summary>
-/// 用户确认后才会调用：把已编译的兼容补丁复制到游戏 Mods 目录，并写入 ModsConfig.xml。
 /// 修改配置前一定备份；已有同名但非本工具生成的目录时拒绝覆盖。
 /// </summary>
 public static class CompatPatchInstaller

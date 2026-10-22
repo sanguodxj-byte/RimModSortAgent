@@ -39,7 +39,10 @@ public sealed record PipelineResult(
     string MarkdownReport,
     IReadOnlyList<string> KnownExpansions,
     string EffectiveGameVersion,
-    IReadOnlyList<ModDescriptor> Mods);
+    IReadOnlyList<ModDescriptor> Mods)
+{
+    public IReadOnlyList<string> UnresolvedActiveTokens { get; init; } = Array.Empty<string>();
+}
 
 /// <summary>
 /// 分析管线契约。界面层只依赖它，不关心内部如何扫描、反编译与排序。

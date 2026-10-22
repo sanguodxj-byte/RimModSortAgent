@@ -32,6 +32,7 @@ internal sealed class ModernButton : Control
             ControlStyles.Selectable |
             ControlStyles.SupportsTransparentBackColor,
             true);
+        SetStyle(ControlStyles.StandardClick, false);
 
         Text = text;
         Variant = variant;
@@ -70,6 +71,15 @@ internal sealed class ModernButton : Control
         var textWidth = UiTheme.MeasureWidth(Text, Font);
         var glyphWidth = string.IsNullOrEmpty(_leadingGlyph) ? 0 : UiTheme.Scale(this, 20);
         Width = Math.Max(UiTheme.Scale(this, 56), textWidth + glyphWidth + UiTheme.Scale(this, 26));
+    }
+
+    /// <summary>
+    /// 按当前 DPI 重新量一次宽度。字号是磅值、会随 DPI 自己变大，
+    /// 边框内边距不会，所以显示器 DPI 变化后要重新贴合文字宽度。
+    /// </summary>
+    public void RefreshMetrics()
+    {
+        AutoFitWidth();
     }
 
     protected override void OnMouseEnter(EventArgs e)
@@ -201,15 +211,20 @@ internal sealed class ModernButton : Control
             TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
     }
 
+    /// <summary>
+    /// 亮/暗两态：可用＝底片抬亮、文字走主文本色、边框可见（对比度与亮度都高）；
+    /// 不可用＝底片压到比标题栏更沉、文字与边框一起降对比，一眼看出点不动。
+    /// 蓝色仅属于 Primary（全应用只有"开始分析"用它）。
+    /// </summary>
     private (Color Fill, Color Border, Color Text) ResolveColors(bool enabled)
     {
         if (!enabled)
         {
             return Variant switch
             {
-                ButtonVariant.Primary => (Color.FromArgb(40, 52, 72), UiTheme.BorderSubtle, UiTheme.TextMuted),
-                ButtonVariant.Danger => (Color.FromArgb(52, 34, 38), UiTheme.BorderSubtle, UiTheme.TextMuted),
-                _ => (Color.FromArgb(26, 30, 39), UiTheme.BorderSubtle, UiTheme.TextMuted)
+                ButtonVariant.Primary => (Color.FromArgb(27, 34, 47), Color.FromArgb(33, 40, 53), UiTheme.DisabledText),
+                ButtonVariant.Danger => (Color.FromArgb(41, 27, 31), Color.FromArgb(33, 40, 53), UiTheme.DisabledText),
+                _ => (UiTheme.DisabledFill, UiTheme.DisabledBorder, UiTheme.DisabledText)
             };
         }
 
@@ -229,7 +244,7 @@ internal sealed class ModernButton : Control
                 _hovered ? UiTheme.TextPrimary : UiTheme.TextSecondary),
             _ => (
                 _pressed ? UiTheme.ElevatedBg : _hovered ? Color.FromArgb(33, 39, 50) : UiTheme.ElevatedBg,
-                _hovered ? UiTheme.BorderStrong : UiTheme.BorderSubtle,
+                _hovered ? UiTheme.BorderStrong : Color.FromArgb(48, 56, 72),
                 UiTheme.TextPrimary)
         };
     }

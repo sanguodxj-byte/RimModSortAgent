@@ -1,7 +1,7 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
+    <OutputType>WinExe</OutputType>
     <TargetFramework>net10.0-windows</TargetFramework>
     <UseWindowsForms>true</UseWindowsForms>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -22,6 +22,22 @@
 
   <ItemGroup>
     <ProjectReference Include="..\DecompilerServer\DecompilerServer.csproj" />
+  </ItemGroup>
+
+  <!-- GABS 以外部进程方式被调用，二进制随包分发；许可原件与二进制同包分发。 -->
+  <ItemGroup>
+    <None Include="..\GABS\gabs.exe" Condition="Exists('..\GABS\gabs.exe')"
+          Link="GABS\gabs.exe"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\GABS\LICENSE" Condition="Exists('..\GABS\LICENSE')"
+          Link="Licenses\GABS-LICENSE.txt"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
+    <None Include="..\DecompilerServer\LICENSE" Condition="Exists('..\DecompilerServer\LICENSE')"
+          Link="Licenses\DecompilerServer-LICENSE.txt"
+          CopyToOutputDirectory="PreserveNewest"
+          CopyToPublishDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

@@ -9,11 +9,11 @@
 | 项目 | 要求 | 说明 |
 | --- | --- | --- |
 | 系统 | Windows 10 及以上（x64） | |
-| 主程序运行时 | .NET 9 桌面运行时 | 安装自包含发布包则无需单独安装 |
-| 兼容生成 | .NET 10 SDK | 仅在生成合并兼容补丁时需要，用于编译补丁 mod |
+| 主程序运行时 | 已内置 .NET 10 桌面运行时 | 自包含发布包无需额外安装 |
+| 兼容生成 | 已内置便携 .NET 10 SDK | 从包内离线编译补丁 mod，无需安装 SDK |
 | 游戏 | RimWorld 安装目录 + Steam 工坊内容目录 | 自动检测（Steam 注册表与 libraryfolders.vdf），检测不到时在「设置」中手动指定 |
-| 实机核验（可选） | GABS | 未安装时自动退回离线扫描 Player.log，不影响排序与冲突分析 |
-| 模型接口（可选） | OpenAI 或 Anthropic 兼容接口 | 默认关闭，关闭时全程本地核查 |
+| 实机验证（可选） | 已内置 GABS、RimBridgeServer、RuntimePatchProbe | 缺失桥接模组由程序从包内自动部署，验证结束后恢复原启用配置 |
+| 模型接口（可选） | OpenAI 兼容接口或 Player2 | 默认关闭；普通排序不依赖模型，使用 Agent 时需要对应服务授权，Player2 不要求安装桌面客户端 |
 
 游戏版本从 ModsConfig.xml 读取；主程序与命令行默认 1.7。
 
@@ -46,7 +46,7 @@ ModSorterAgent.exe --selftest                                 跑内置自检（
 ## 隐私
 
 - 默认 `agentProvider=off`，所有分析在本机完成，不发起网络请求。
-- 启用模型接口后，「深度核查」与「兼容生成」会把相关模组的 XML 片段、反编译代码片段与冲突上下文发送到所配置的接口地址。所配置的是自备的 OpenAI 或 Anthropic 兼容接口。
+- 启用模型接口后，「深度核查」与「兼容生成」会把相关模组的 XML 片段、反编译代码片段与冲突上下文发送到所配置的接口地址。所配置的是自备的 OpenAI 兼容接口或 Player2。
 - API Key 经 Windows DPAPI 加密后存放在同目录 `AppSettings.json`，只有当前 Windows 用户能解密；也可用环境变量 `MODSORTER_AGENT_API_KEY` 在运行期注入。
 
 ## 从源码构建
@@ -60,15 +60,21 @@ cd RimModSortAgent
 dotnet build ModSorterAgent.csproj -c Release
 ```
 
-需要 .NET 9 SDK 或更高版本。DecompilerServer 的依赖（ICSharpCode.Decompiler、ModelContextProtocol、Microsoft.Extensions.*）会随项目引用自动还原。
+需要 .NET 10 SDK。若 PATH 中的 dotnet 是旧版本（会报 NETSDK1045「当前 .NET SDK 不支持面向 .NET 10.0」），用带 10.x 的那个 SDK 显式构建，例如：
+
+```
+"%USERPROFILE%\.dotnet\dotnet.exe" build ModSorterAgent.csproj -c Release
+```
+
+DecompilerServer 的依赖（ICSharpCode.Decompiler、ModelContextProtocol、Microsoft.Extensions.*）会随项目引用自动还原。
 
 ## 发布打包
 
 ```
-powershell -ExecutionPolicy Bypass -File publish.ps1 -Zip
+powershell -ExecutionPolicy Bypass -File publish.ps1 -SelfContained -Zip
 ```
 
-脚本编译发布、剔除个人数据与运行非必需文件、内附本说明与第三方许可、对产物跑一次自检，并在 artifacts\publish\ 输出目录与 zip（含 SHA256）。加 -SelfContained 生成自包含包（用户无需预装 .NET 9 桌面运行时）。
+脚本自动优先选用带 .NET 10 SDK 的 dotnet，编译发布、剔除个人数据与运行非必需文件、内附本说明、第三方许可与许可证原件、对产物跑一次自检，并在 artifacts\publish\ 输出目录与 zip（含 SHA256）。加 -SelfContained 生成自包含包（用户无需预装 .NET 10 桌面运行时）。
 
 ## 许可
 

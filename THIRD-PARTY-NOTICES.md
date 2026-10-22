@@ -1,15 +1,20 @@
 # 第三方组件许可声明
 
-本软件（ModSorterAgent）随包分发下列第三方组件。各组件的版本与许可类型取自其 NuGet 包元数据（nuspec），许可原文见本文末尾。
+本软件（ModSorterAgent）随包分发下列第三方组件。各组件的版本与许可类型取自其元数据（nuspec 或源码声明），许可原文见本文末尾。
 
 ## 分发内容
 
 | 组件 | 版本 | 许可 | 版权归属 |
 | --- | --- | --- | --- |
+| Harmony | 2.3.1.0 | MIT | Copyright (c) 2017 Andreas Pardeike |
+| GABS | 1.1.0 | MIT | Copyright (c) 2024 GABS Contributors |
 | DecompilerServer | 1.3.8 | MIT | Copyright (c) 2025 Andreas Pardeike |
 | ICSharpCode.Decompiler | 10.0.1.8346 | MIT | Copyright 2011-2026 AlphaSierraPapa |
 | ModelContextProtocol | 1.3.0 | Apache-2.0 | Model Context Protocol a Series of LF Projects, LLC |
 | ModelContextProtocol.Core | 1.3.0 | Apache-2.0 | Model Context Protocol a Series of LF Projects, LLC |
+| Microsoft .NET SDK & Runtime | 10.0 | MIT / Third-Party Notices | Microsoft Corporation |
+| RimBridgeServer | 1.6 | MIT | Copyright (c) 2025 Andreas Pardeike |
+| RuntimePatchProbe | 1.0.0 | MIT | ModSorterAgent Contributors |
 | Microsoft.Extensions.AI.Abstractions | 10.5.2 | MIT | Microsoft Corporation |
 | Microsoft.Extensions.Caching.Abstractions | 10.0.7 | MIT | Microsoft Corporation |
 | Microsoft.Extensions.Configuration | 10.0.8 | MIT | Microsoft Corporation |
@@ -39,22 +44,30 @@
 | Microsoft.Extensions.Options | 10.0.8 | MIT | Microsoft Corporation |
 | Microsoft.Extensions.Options.ConfigurationExtensions | 10.0.8 | MIT | Microsoft Corporation |
 | Microsoft.Extensions.Primitives | 10.0.8 | MIT | Microsoft Corporation |
-| System.Diagnostics.DiagnosticSource | 10.0.8 | MIT | Microsoft Corporation |
-| System.Diagnostics.EventLog | 10.0.8 | MIT | Microsoft Corporation |
-| System.IO.Pipelines | 10.0.8 | MIT | Microsoft Corporation |
-| System.Net.ServerSentEvents | 10.0.7 | MIT | Microsoft Corporation |
-| System.Text.Encodings.Web | 10.0.8 | MIT | Microsoft Corporation |
-| System.Text.Json | 10.0.8 | MIT | Microsoft Corporation |
+
+Harmony 随发布包内置于 BundledMods\Harmony 目录，作为实机桥接运行必需前置模组，其 MIT 许可原件随附于 BundledMods\Harmony\LICENSE 文件。
+
+RimBridgeServer 随发布包内置于 BundledMods\RimBridgeServer 目录，其 MIT 许可来自输入来源中的 BundledMods\RimBridgeServer\LICENSE 文件。
+
+RuntimePatchProbe 随发布包内置于 BundledMods\RuntimePatchProbe 目录，作为 ModSorterAgent 本产品的自有 companion 模组，遵循本产品的开源许可（MIT License）。
+
+.NET 10 SDK 工具链与运行时随发布包内置于 Tools\dotnet 目录，其再分发许可取自 DOTNET_ROOT\LICENSE.txt 与 DOTNET_ROOT\ThirdPartyNotices.txt，原件随附于 Tools\dotnet\LICENSE.txt 与 Tools\dotnet\ThirdPartyNotices.txt。
 
 ModelContextProtocol 及其 Core 包以 Apache-2.0 分发，其包内不含 NOTICE 文件，故本次分发无需随附额外 NOTICE；许可原文随附于本文末尾。
+
+GABS、DecompilerServer、ICSharpCode.Decompiler 的许可原件同时以独立文件随发布包分发于 Licenses 目录。
 
 ---
 
 ## MIT License
 
+Copyright (c) 2017 Andreas Pardeike（Harmony）
+Copyright (c) 2024 GABS Contributors（GABS）
 Copyright (c) 2025 Andreas Pardeike（DecompilerServer）
+Copyright (c) 2025 Andreas Pardeike（RimBridgeServer）
 Copyright 2011-2026 AlphaSierraPapa（ICSharpCode.Decompiler）
-Copyright (c) Microsoft Corporation（Microsoft.Extensions.*、System.* 系列）
+Copyright (c) Microsoft Corporation（.NET SDK 与 Microsoft.Extensions.* 系列）
+Copyright (c) ModSorterAgent Contributors（RuntimePatchProbe 与 ModSorterAgent）
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal

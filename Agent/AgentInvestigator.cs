@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using ModSorterAgent.Models;
@@ -18,7 +19,7 @@ public sealed class AgentInvestigator : IDisposable
         PropertyNameCaseInsensitive = true
     };
 
-    private const string AgentToolsPrompt = """
+    private const string StaticToolsPrompt = """
 
 ## 可用工具（文件 + 反编译）
 运行时已提供 read_file / list_files / write_file，以及 list_assemblies / find_members / decompile_method / decompile_type。
@@ -31,13 +32,39 @@ public sealed class AgentInvestigator : IDisposable
 一旦证据足够，立即输出最终 JSON 结论，不要为了反复确认而继续读取。
 """;
 
+    private const string LiveToolsPrompt = """
+
+## 可用工具（实机）
+运行时还提供 rimworld_start / rimworld_status / rimworld_call / rimworld_tools / rimworld_stop。
+它们让你直接操作真实的 RimWorld：启动游戏、读实机日志、查模组加载状态、推进时间、触发调试动作。
+
+本轮是实机核验，**必须取得实机证据才能下结论**：
+- 每条结论都必须至少有一次 rimworld_call 的实际返回作为依据（日志、模组配置状态、告警、模组列表等）。
+- 只做反编译静态分析、没有调用过 rimworld_call 的结论，宿主会判为"证据不足"并拒绝采信。
+- 需要实机证据时直接调用 rimworld_start；若它返回"尚未启动实机会话"，说明你还没启动，不要因此放弃实机核查。
+- 启动、建测试殖民地、推进时间都由你决定，没有固定顺序；rimworld_status 只用于查看状态，不计入证据。
+- 常用：rimbridge/list_logs 读日志、rimworld/get_mod_configuration_status 查加载顺序问题、
+  rimworld/list_mods 查模组与当前会话是否一致、rimworld/list_alerts 查当前告警、
+  rimworld/start_debug_game_ready 建测试殖民地、rimworld/step_game_ticks 推进时间。
+- 用 rimworld_tools 可以发现更多可用能力。
+- 实机操作完成后（无论成败）必须调用 rimworld_stop 收尾：它会关掉你启动的游戏并把桥接模组移出加载列表。
+- 结论里必须写清你实际观察到了什么（哪条日志、哪个状态、哪次调用返回了什么）。
+""";
+
     private readonly AgentConfig _config;
     private readonly AgentCaseBuilder _caseBuilder;
     private readonly AgentClient? _client;
     private readonly IReadOnlyList<ModDescriptor> _mods;
     private readonly string _gameDir;
     private readonly AgentDecompilerTools _decompilerTools;
+    private AgentGabsTools? _gabsTools;
     private readonly Action<string>? _trace;
+
+    /// <summary>界面注入的实时出口，用于把推理与工具调用显示在 Agent 窗口。</summary>
+    public IAgentLiveSink? LiveSink { get; set; }
+
+    /// <summary>运行中玩家补充的要求；为空表示本次运行没有开启输入。</summary>
+    public AgentGuidanceChannel? Guidance { get; set; }
     private readonly ConcurrentDictionary<string, AgentReport> _cache = new(StringComparer.OrdinalIgnoreCase);
 
     // 反编译上下文与缓存不是线程安全的：取证阶段串行化，模型调用仍可并行。
@@ -47,7 +74,8 @@ public sealed class AgentInvestigator : IDisposable
         AgentConfig config,
         IReadOnlyList<ModDescriptor> mods,
         string gameDir,
-        Action<string>? trace = null)
+        Action<string>? trace = null,
+        bool enableGabsTools = false)
     {
         _config = config;
         _caseBuilder = new AgentCaseBuilder(mods, gameDir);
@@ -56,15 +84,53 @@ public sealed class AgentInvestigator : IDisposable
         _trace = trace;
         _decompilerTools = new AgentDecompilerTools(mods, gameDir, trace);
 
+        // 实机工具让 Agent 自己启动游戏、采证据、下结论，宿主不做任何推断。
+        if (enableGabsTools)
+        {
+            var gabsPath = AgentGabsTools.ResolveGabsExePath();
+            if (File.Exists(gabsPath))
+                _gabsTools = new AgentGabsTools(gabsPath, trace);
+        }
+
         if (config.IsConfigured)
             _client = new AgentClient(config);
     }
 
     public bool UsesModel => _client != null;
 
+    /// <summary>
+    /// 开关实机工具。实机核验期间开启，结束后关闭并回收会话与桥接模组。
+    /// </summary>
+    public void EnableLiveTools(bool enabled)
+    {
+        if (enabled)
+        {
+            if (_gabsTools == null && _client != null)
+            {
+                var gabsPath = AgentGabsTools.ResolveGabsExePath();
+                if (File.Exists(gabsPath))
+                    _gabsTools = new AgentGabsTools(gabsPath, _trace);
+            }
+        }
+        else
+        {
+            _gabsTools?.Dispose();
+            _gabsTools = null;
+        }
+    }
+
     public string ModeLabel => _client == null
         ? "本地代码核查"
-        : $"模型核查 · {_config.Model}";
+        : _config.IsPlayer2
+            ? "模型核查 · Player2"
+            : $"模型核查 · {_config.Model}";
+
+    /// <summary>清空所有模型核查缓存，保证深度核查重新触发真实模型推演。</summary>
+    public void ClearModelCache()
+    {
+        foreach (var key in _cache.Keys.Where(k => k.StartsWith("model:", StringComparison.OrdinalIgnoreCase)).ToList())
+            _cache.TryRemove(key, out _);
+    }
 
     public async Task<AgentReport> InvestigateAsync(
         PlayerConflict conflict,
@@ -73,7 +139,11 @@ public sealed class AgentInvestigator : IDisposable
     {
         var cacheKey = (useModel && _client != null ? "model:" : "local:") + conflict.Key;
         if (_cache.TryGetValue(cacheKey, out var cached))
-            return cached;
+        {
+            // 如果请求使用模型，但缓存里是报错回退的本地核查结果，不作为有效模型结论复用，重新由模型核查。
+            if (!useModel || _client == null || (cached.Error == null && !cached.Mode.Equals("本地代码核查", StringComparison.Ordinal)))
+                return cached;
+        }
 
         AgentCaseFile caseFile;
         await _caseGate.WaitAsync(cancellationToken).ConfigureAwait(false);
@@ -90,19 +160,8 @@ public sealed class AgentInvestigator : IDisposable
         AgentReport report;
         if (_client != null && useModel)
         {
-            try
-            {
-                report = await InvestigateWithModelAsync(conflict, caseFile, cancellationToken).ConfigureAwait(false);
-            }
-            catch (OperationCanceledException)
-            {
-                throw;
-            }
-            catch (Exception ex)
-            {
-                report = BuildLocalReport(conflict, caseFile,
-                    $"模型调用失败，已回退本地核查：{ex.Message}");
-            }
+            // 严禁任何兜底：API 与模型调用异常直接向上抛出，立即中断并报错，禁止回退到本地核查
+            report = await InvestigateWithModelAsync(conflict, caseFile, cancellationToken).ConfigureAwait(false);
         }
         else
         {
@@ -118,19 +177,28 @@ public sealed class AgentInvestigator : IDisposable
         IProgress<(int Done, int Total, string Label)>? progress = null,
         CancellationToken cancellationToken = default,
         bool useModel = true,
-        Action<AgentReport>? onReport = null)
+        Action<AgentReport>? onReport = null,
+        string? liveTitle = null)
     {
         var reports = new List<AgentReport>(conflicts.Count);
+
+        if (LiveSink != null && !string.IsNullOrWhiteSpace(liveTitle))
+            LiveSink.Begin(liveTitle, conflicts.Count);
+
         for (var i = 0; i < conflicts.Count; i++)
         {
             cancellationToken.ThrowIfCancellationRequested();
             progress?.Report((i, conflicts.Count, $"核查：{conflicts[i].PairLabel}"));
+            LiveSink?.BeginConflict(conflicts[i], i, conflicts.Count);
+
             var report = await InvestigateAsync(conflicts[i], cancellationToken, useModel).ConfigureAwait(false);
             reports.Add(report);
             onReport?.Invoke(report);
+            LiveSink?.ConflictCompleted(conflicts[i], report);
             progress?.Report((i + 1, conflicts.Count, $"完成：{conflicts[i].PairLabel}"));
         }
 
+        LiveSink?.End(reports);
         return reports;
     }
 
@@ -145,9 +213,11 @@ public sealed class AgentInvestigator : IDisposable
         var fileTools = new AgentFileTools(
             _mods.Select(m => m.RootDirectory).Append(_gameDir),
             workspace);
-        var prompt = caseFile.PromptText + AgentToolsPrompt + AssemblyHints(conflict);
+        var toolsPrompt = _gabsTools != null ? StaticToolsPrompt + "\n" + LiveToolsPrompt : StaticToolsPrompt;
+        var prompt = AppendGuidance(caseFile.PromptText + toolsPrompt + AssemblyHints(conflict));
         _decompilerTools.BeginConversation();
         var decompileCallsBefore = _decompilerTools.EvidenceCalls;
+        var liveCallsBefore = _gabsTools?.EvidenceCalls ?? 0;
 
         string raw;
         try
@@ -156,6 +226,8 @@ public sealed class AgentInvestigator : IDisposable
                 prompt,
                 BuildToolDefinitions(fileTools),
                 BuildToolExecutor(fileTools),
+                onReasoning: text => LiveSink?.Reasoning(conflict, text),
+                onToolCall: call => LiveSink?.ToolCall(conflict, call),
                 cancellationToken).ConfigureAwait(false);
         }
         catch (AgentToolsUnsupportedException)
@@ -171,13 +243,56 @@ public sealed class AgentInvestigator : IDisposable
                       ?? throw new InvalidOperationException("模型返回的 JSON 为空。");
 
         var report = BuildModelReport(conflict, caseFile, raw, payload);
+
+        // 实机核验轮次：没有真实调用过 rimworld_call 就下结论，视为证据不足。
+        if (_gabsTools != null && _gabsTools.EvidenceCalls <= liveCallsBefore)
+            report = DemoteToInsufficientEvidence(report, "本轮没有取得实机证据");
+
         return EnforceDecompilerEvidence(
             report,
             _decompilerTools.EvidenceCalls > decompileCallsBefore);
     }
 
+    /// <summary>
+    /// 没有取得实机证据的结论降级为"证据不足"，避免把纯静态推断当成实机核验结果。
+    /// </summary>
+    private static AgentReport DemoteToInsufficientEvidence(AgentReport report, string reason)
+    {
+        return report with
+        {
+            Verdict = AgentVerdictKind.InsufficientEvidence,
+            Confidence = 0,
+            Explanation = (report.Explanation +
+                           $"\n\n（{reason}：未调用 rimworld_call 取得实机日志或状态，宿主不采信该结论为实机结果。）").Trim()
+        };
+    }
+
+    /// <summary>
+    /// 把玩家运行中投递的要求接到提示词末尾。带在案的说明会随之后每一次调用一起下发，
+    /// 所以中途补充的要求对剩余冲突同样生效；没有要求时原样返回。
+    /// </summary>
+    private string AppendGuidance(string prompt)
+    {
+        var guidance = Guidance?.Snapshot();
+        if (guidance == null || guidance.Count == 0)
+            return prompt;
+
+        var text = new StringBuilder(prompt);
+        text.Append("\n\n## 玩家运行中补充的要求\n");
+        foreach (var message in guidance)
+            text.Append("- ").Append(message).Append('\n');
+
+        text.Append("以上要求来自玩家本人，后续核查与补丁方案必须遵守；与上文默认取法冲突时以玩家要求为准。");
+        return text.ToString();
+    }
+
     private IReadOnlyList<AgentToolDefinition> BuildToolDefinitions(AgentFileTools fileTools)
-        => fileTools.Definitions.Concat(_decompilerTools.Definitions).ToList();
+    {
+        var defs = fileTools.Definitions.Concat(_decompilerTools.Definitions);
+        if (_gabsTools != null)
+            defs = defs.Concat(_gabsTools.Definitions);
+        return defs.ToList();
+    }
 
     private string AssemblyHints(PlayerConflict conflict)
         => _decompilerTools.DescribeAssembliesFor(new[] { conflict.ModAPackageId, conflict.ModBPackageId });
@@ -186,6 +301,10 @@ public sealed class AgentInvestigator : IDisposable
         => async (call, cancellationToken) =>
         {
             _trace?.Invoke($"tool {call.Name} {Shorten(call.ArgumentsJson, 240)}");
+
+            if (_gabsTools != null && _gabsTools.Handles(call.Name))
+                return await _gabsTools.ExecuteAsync(call, cancellationToken).ConfigureAwait(false);
+
             return _decompilerTools.Handles(call.Name)
                 ? await _decompilerTools.ExecuteAsync(call, cancellationToken).ConfigureAwait(false)
                 : await fileTools.ExecuteAsync(call, cancellationToken).ConfigureAwait(false);
@@ -239,7 +358,7 @@ public sealed class AgentInvestigator : IDisposable
             _caseGate.Release();
         }
 
-        var prompt = BuildRepairPrompt(caseFile, plan.HarmonyCode, compilerOutput) + AssemblyHints(conflict);
+        var prompt = AppendGuidance(BuildRepairPrompt(caseFile, plan.HarmonyCode, compilerOutput) + AssemblyHints(conflict));
         var workspace = Path.Combine(
             AgentConfigLoader.DefaultCaseOutputDir,
             AgentFileTools.SafeWorkspaceName(conflict.Key));
@@ -668,10 +787,6 @@ public sealed class AgentInvestigator : IDisposable
                     "缺少前置会直接报错",
                     "游戏在加载 Def 阶段就会因为找不到依赖而报错，模组内容不会正常工作。",
                     "high"));
-                risks.Add(new AgentHiddenRisk(
-                    "版本不匹配同样会失败",
-                    "即使安装了同名前置，版本或分支不匹配仍可能缺少 Def 或程序集。",
-                    "medium"));
                 break;
 
             case "CyclicLoadOrderConstraint":
@@ -783,6 +898,7 @@ public sealed class AgentInvestigator : IDisposable
     public void Dispose()
     {
         _client?.Dispose();
+        _gabsTools?.Dispose();
         _decompilerTools.Dispose();
         _caseBuilder.Dispose();
         _caseGate.Dispose();

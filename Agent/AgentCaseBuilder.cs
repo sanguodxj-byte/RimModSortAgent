@@ -81,7 +81,7 @@ public sealed class AgentCaseBuilder : IDisposable
             }
         }
         else if (conflict.Category is "ExplicitIncompatibility" or "MissingDependency" or
-                 "CyclicLoadOrderConstraint" or "SoftConstraintCycleDropped")
+                 "CyclicLoadOrderConstraint")
         {
             AddDeclarationSamples(conflict, modA, "A", samples);
             AddDeclarationSamples(conflict, modB, "B", samples);

@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using ModSorterAgent.Agent;
 using ModSorterAgent.Discovery;
 using ModSorterAgent.Services;
@@ -24,7 +25,7 @@ internal sealed class SettingsDialog : Form
 
     private readonly List<PathRow> _rows = new();
 
-    private readonly SegmentedControl _providerInput = new("仅本地核查", "OpenAI 兼容", "Anthropic");
+    private readonly SegmentedControl _providerInput = new("仅本地核查", "OpenAI 兼容", "Player2");
     private readonly SettingsField _baseUrlInput = new();
     private readonly SettingsField _modelInput = new();
     private readonly SettingsField _apiKeyInput = new();
@@ -34,6 +35,13 @@ internal sealed class SettingsDialog : Form
 
     private readonly SettingsBadge _providerBadge = new();
     private readonly Label _providerHint = new();
+
+    /// <summary>Agent 字段行。Player2 只需授权那一条，其余行隐藏。</summary>
+    private AgentFieldRow? _baseUrlRow;
+    private AgentFieldRow? _modelRow;
+    private AgentFieldRow? _apiKeyRow;
+
+    private readonly ModernButton _player2AuthButton = new("网页鉴权", ButtonVariant.Secondary);
 
     private readonly List<SettingsNavItem> _navItems = new();
     private readonly List<Panel> _pages = new();
@@ -141,8 +149,7 @@ internal sealed class SettingsDialog : Form
         PlaceClose();
         close.Click += (_, _) =>
         {
-            DialogResult = DialogResult.Cancel;
-            Close();
+            Save();
         };
 
         _header.Controls.Add(titleLabel);
@@ -275,8 +282,7 @@ internal sealed class SettingsDialog : Form
         {
             Height = 32,
             Width = 128,
-            BackColor = UiTheme.SurfaceBg,
-            LeadingGlyph = "◆"
+            BackColor = UiTheme.SurfaceBg
         };
 
         cancel.Click += (_, _) =>
@@ -697,7 +703,7 @@ internal sealed class SettingsDialog : Form
         _providerInput.SelectedIndex = settings.AgentProvider.Trim().ToLowerInvariant() switch
         {
             "openai" => 1,
-            "anthropic" => 2,
+            "player2" => 2,
             _ => 0
         };
         _providerInput.SelectionChanged += (_, _) => UpdateProviderHint();
@@ -720,15 +726,16 @@ internal sealed class SettingsDialog : Form
         var fieldsCard = new RoundedCard { Location = new Point(26, 240) };
 
         StyleField(_baseUrlInput, settings.AgentBaseUrl, "留空使用服务商默认地址");
-        StyleField(_modelInput, settings.AgentModel, "例如 gpt-4.1 或 claude-sonnet-4-5");
-        StyleField(_apiKeyInput, string.Empty, string.IsNullOrEmpty(_existingProtectedKey)
-            ? "可选；也可用环境变量 MODSORTER_AGENT_API_KEY"
-            : "已保存密钥，留空保留");
+        StyleField(_modelInput, settings.AgentModel, "例如 gpt-4.1；Player2 可留空");
+        var hasExistingKey = !string.IsNullOrEmpty(_existingProtectedKey);
+        StyleField(_apiKeyInput, string.Empty, hasExistingKey
+            ? "•••••••••••••••• (已保存密钥，留空保留)"
+            : "可选；也可用环境变量 MODSORTER_AGENT_API_KEY");
         _apiKeyInput.UseSystemPasswordChar = true;
 
         var rows = new (string Title, string Hint, SettingsField Field)[]
         {
-            ("接口地址", "OpenAI /v1 或 Anthropic", _baseUrlInput),
+            ("接口地址", "OpenAI 兼容 /v1 或 Player2 接口根地址", _baseUrlInput),
             ("模型名称", "需支持长上下文与严格 JSON", _modelInput),
             ("API Key", "DPAPI 加密，仅本用户可解", _apiKeyInput)
         };
@@ -740,8 +747,19 @@ internal sealed class SettingsDialog : Form
                 Location = new Point(1, 1 + i * 68),
                 ShowSeparator = i < rows.Length - 1
             };
+
+            switch (i)
+            {
+                case 0: _baseUrlRow = row; break;
+                case 1: _modelRow = row; break;
+                case 2: _apiKeyRow = row; break;
+            }
+
             fieldsCard.Controls.Add(row);
         }
+
+        _player2AuthButton.Visible = false;
+        _player2AuthButton.Click += (_, _) => StartPlayer2WebAuth();
 
         var patchCard = new RoundedCard { Location = new Point(26, 458) };
 
@@ -805,6 +823,9 @@ internal sealed class SettingsDialog : Form
         page.Resize += (_, _) => LayoutPage();
         _layoutActions.Add(LayoutPage);
         LayoutPage();
+
+        // 构造早期调用 UpdateProviderHint 时字段行尚未建好，这里按已保存的提供方再落一次。
+        ApplyProviderFieldLayout(_providerInput.SelectedIndex);
     }
 
     private static void StyleField(SettingsField field, string text, string placeholder)
@@ -821,9 +842,11 @@ internal sealed class SettingsDialog : Form
         _providerHint.Text = index switch
         {
             1 => "调用 OpenAI 兼容接口；需填写模型名称。接口地址留空时使用默认地址。",
-            2 => "调用 Anthropic messages 接口；需填写模型名称。接口地址留空时使用官方地址。",
+            2 => "选中即可用：凭据由本地客户端自动提供，客户端未运行时可在下方发起网页鉴权。",
             _ => "不调用任何模型：Agent 只在本机反编译双方补丁并给出结论，不会生成未经核对的代码。"
         };
+
+        ApplyProviderFieldLayout(index);
 
         _providerBadge.SetState(modeled ? "模型增强" : "本地优先",
             modeled ? UiTheme.Green : UiTheme.TextSecondary,
@@ -836,12 +859,97 @@ internal sealed class SettingsDialog : Form
         }
     }
 
+    /// <summary>
+    /// Player2 不需要接口地址与模型名，把这两行收起来，只留一条授权行；
+    /// 其余提供方恢复三行原样。行的显示与位置都限制在本卡片内，卡片高度不变，
+    /// 因此不影响下方任何既有控件的位置。
+    /// </summary>
+    private void ApplyProviderFieldLayout(int index)
+    {
+        var isPlayer2 = index == 2;
+
+        if (_baseUrlRow != null)
+            _baseUrlRow.Visible = !isPlayer2;
+
+        if (_modelRow != null)
+            _modelRow.Visible = !isPlayer2;
+
+        if (_apiKeyRow == null)
+            return;
+
+        if (isPlayer2)
+        {
+            var hasKey = !string.IsNullOrEmpty(_existingProtectedKey) || !string.IsNullOrWhiteSpace(_apiKeyInput.Text);
+            _apiKeyRow.SetTexts("Player2 授权",
+                hasKey ? "已配置 Player2 授权凭据；本地客户端运行时将优先走本地" : "本地客户端自动提供凭据；也可点右侧按钮走网页鉴权");
+            _apiKeyRow.Action = _player2AuthButton;
+            _apiKeyRow.Location = new Point(1, 1);
+        }
+        else
+        {
+            var hasKey = !string.IsNullOrEmpty(_existingProtectedKey) || !string.IsNullOrWhiteSpace(_apiKeyInput.Text);
+            _apiKeyRow.SetTexts("API Key",
+                hasKey ? "已配置密钥（DPAPI 加密保护，留空保留）" : "DPAPI 加密，仅本用户可解");
+            _apiKeyRow.Action = null;
+            _apiKeyRow.Location = new Point(1, 1 + 2 * 68);
+        }
+
+        if (_baseUrlRow != null)
+            _baseUrlRow.Location = new Point(1, 1);
+        if (_modelRow != null)
+            _modelRow.Location = new Point(1, 1 + 68);
+    }
+
+    /// <summary>
+    /// 网页鉴权：申请设备码 → 打开授权页 → 轮询换取密钥，成功后填入密钥框，随保存一并落盘。
+    /// </summary>
+    private async void StartPlayer2WebAuth()
+    {
+        _player2AuthButton.Enabled = false;
+        _player2AuthButton.Text = "等待授权…";
+        _apiKeyRow?.SetTexts("Player2 授权", "浏览器已打开，请登录并确认授权");
+
+        try
+        {
+            var key = await Player2AuthService.AuthorizeViaWebAsync(prompt =>
+            {
+                try
+                {
+                    Process.Start(new ProcessStartInfo(prompt.ApprovalUrl) { UseShellExecute = true });
+                }
+                catch
+                {
+                    // 打不开浏览器不算失败，用户仍可手动访问授权页。
+                }
+            });
+
+            _apiKeyInput.Text = key;
+            _apiKeyRow?.SetTexts("Player2 授权", "已通过网页鉴权获取密钥，保存设置后生效");
+            MessageBox.Show(this,
+                "已获取 Player2 密钥并填入输入框。\n点「保存设置」后生效。",
+                "Player2 授权", MessageBoxButtons.OK, MessageBoxIcon.Information);
+        }
+        catch (Exception ex)
+        {
+            _apiKeyRow?.SetTexts("Player2 授权", "网页鉴权未完成，可重试或改用本地客户端");
+            MessageBox.Show(this,
+                "Player2 网页鉴权未完成：\n" + ex.Message,
+                "Player2 授权", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            _player2AuthButton.Text = "网页鉴权";
+            _player2AuthButton.Enabled = true;
+        }
+    }
+
     private sealed class AgentFieldRow : Panel
     {
         private readonly SettingsDialog _owner;
         private readonly Label _titleLabel;
         private readonly Label _hintLabel;
         private readonly SettingsField _field;
+        private Control? _action;
 
         [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
         public bool ShowSeparator { get; set; }
@@ -879,13 +987,49 @@ internal sealed class SettingsDialog : Form
             Height = 68;
         }
 
+        /// <summary>改写标题与提示，供提供方切换时复用同一行。</summary>
+        public void SetTexts(string title, string hint)
+        {
+            _titleLabel.Text = title;
+            _hintLabel.Text = hint;
+        }
+
+        /// <summary>
+        /// 行尾的可选操作按钮。未设置时布局与从前完全一致，只在设置了才让出右侧空间。
+        /// </summary>
+        [DesignerSerializationVisibility(DesignerSerializationVisibility.Hidden)]
+        public Control? Action
+        {
+            get => _action;
+            set
+            {
+                if (_action != null)
+                    Controls.Remove(_action);
+
+                _action = value;
+                if (_action != null)
+                    Controls.Add(_action);
+
+                PerformLayout();
+            }
+        }
+
         protected override void OnResize(EventArgs e)
         {
             base.OnResize(e);
             var fieldLeft = Px(216);
+            var reserved = _action is { Visible: true } ? _action.Width + Px(10) : 0;
+
             _field.Location = new Point(fieldLeft, (Height - Px(36)) / 2);
-            _field.Width = Math.Max(Px(120), Width - fieldLeft - Px(18));
+            _field.Width = Math.Max(Px(120), Width - fieldLeft - Px(18) - reserved);
             _hintLabel.Width = Math.Max(Px(100), fieldLeft - Px(36));
+
+            if (_action != null)
+            {
+                _action.Location = new Point(
+                    Math.Max(fieldLeft, Width - Px(18) - _action.Width),
+                    (Height - _action.Height) / 2);
+            }
         }
 
         private int Px(int value) => _owner._dpiScaled ? UiTheme.Scale(this, value) : value;
@@ -1104,7 +1248,7 @@ internal sealed class SettingsDialog : Form
                 "路径不存在",
                 MessageBoxButtons.OKCancel,
                 MessageBoxIcon.Warning,
-                MessageBoxDefaultButton.Button2);
+                MessageBoxDefaultButton.Button1);
             if (confirm != DialogResult.OK)
                 return;
         }
@@ -1112,11 +1256,12 @@ internal sealed class SettingsDialog : Form
         var provider = _providerInput.SelectedIndex switch
         {
             1 => "openai",
-            2 => "anthropic",
+            2 => "player2",
             _ => "off"
         };
 
-        if (provider != "off" && string.IsNullOrWhiteSpace(_modelInput.Text))
+        // Player2 由服务端选定模型，不要求填模型名。
+        if (provider != "off" && provider != "player2" && string.IsNullOrWhiteSpace(_modelInput.Text))
         {
             ShowPage(1, updateNav: true);
             MessageBox.Show(this,
@@ -1126,7 +1271,8 @@ internal sealed class SettingsDialog : Form
             return;
         }
 
-        if (provider != "off" && string.IsNullOrWhiteSpace(_apiKeyInput.Text) &&
+        // Player2 的凭据可由本地客户端在调用时自动换取，缺密钥不构成保存障碍。
+        if (provider != "off" && provider != "player2" && string.IsNullOrWhiteSpace(_apiKeyInput.Text) &&
             string.IsNullOrEmpty(_existingProtectedKey) &&
             string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable(AgentConfigLoader.EnvApiKey)))
         {
@@ -1137,7 +1283,7 @@ internal sealed class SettingsDialog : Form
                 "Agent 设置",
                 MessageBoxButtons.OKCancel,
                 MessageBoxIcon.Information,
-                MessageBoxDefaultButton.Button2);
+                MessageBoxDefaultButton.Button1);
             if (confirm != DialogResult.OK)
                 return;
         }

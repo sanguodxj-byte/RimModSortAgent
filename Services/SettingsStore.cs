@@ -28,12 +28,13 @@ public sealed class AppSettings
     public bool IncludeWorkshopSubscriptions { get; set; }
 
     // ── Agent ──
-    /// <summary>Agent 协议：off / openai / anthropic。</summary>
+    /// <summary>Agent 协议：off / openai / player2。</summary>
     public string AgentProvider { get; set; } = "off";
 
-    /// <summary>OpenAI 兼容或 Anthropic 兼容接口地址（留空使用默认）。</summary>
+    /// <summary>OpenAI 兼容或 Player2 接口地址（留空使用默认）。</summary>
     public string AgentBaseUrl { get; set; } = string.Empty;
 
+    /// <summary>模型名称；Player2 由服务端选定模型，可留空。</summary>
     public string AgentModel { get; set; } = string.Empty;
 
     /// <summary>DPAPI 加密后的 API Key（仅当前 Windows 用户可解密）。</summary>
@@ -282,10 +283,23 @@ public sealed class SettingsStore
     };
 
     public string StorePath { get; }
+    private readonly string? _backupPath;
 
     public SettingsStore(string? storePath = null)
     {
         StorePath = storePath ?? Path.Combine(AppContext.BaseDirectory, "AppSettings.json");
+        try
+        {
+            var appDataDir = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "ModSorterAgent");
+            _backupPath = Path.Combine(appDataDir, "AppSettings.json");
+        }
+        catch
+        {
+            _backupPath = null;
+        }
+
         Current = Load();
     }
 
@@ -294,13 +308,34 @@ public sealed class SettingsStore
     public void Save(AppSettings settings)
     {
         Current = settings;
+        var json = JsonSerializer.Serialize(settings, JsonOptions);
+
         try
         {
-            File.WriteAllText(StorePath, JsonSerializer.Serialize(settings, JsonOptions));
+            var dir = Path.GetDirectoryName(StorePath);
+            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                Directory.CreateDirectory(dir);
+
+            File.WriteAllText(StorePath, json);
         }
         catch
         {
-            // 只读目录等场景静默失败：功能退化为本次会话内存态
+            // 只读目录等场景静默失败：功能退化为本次会话内存态与备份存储
+        }
+
+        if (!string.IsNullOrEmpty(_backupPath))
+        {
+            try
+            {
+                var dir = Path.GetDirectoryName(_backupPath);
+                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                    Directory.CreateDirectory(dir);
+
+                File.WriteAllText(_backupPath, json);
+            }
+            catch
+            {
+            }
         }
     }
 
@@ -308,15 +343,45 @@ public sealed class SettingsStore
     {
         try
         {
-            if (!File.Exists(StorePath))
-                return new AppSettings();
-
-            var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(StorePath), JsonOptions);
-            return settings ?? new AppSettings();
+            if (File.Exists(StorePath))
+            {
+                var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(StorePath), JsonOptions);
+                if (settings != null)
+                    return settings;
+            }
         }
         catch
         {
-            return new AppSettings();
         }
+
+        if (!string.IsNullOrEmpty(_backupPath))
+        {
+            try
+            {
+                if (File.Exists(_backupPath))
+                {
+                    var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(_backupPath), JsonOptions);
+                    if (settings != null)
+                    {
+                        try
+                        {
+                            var dir = Path.GetDirectoryName(StorePath);
+                            if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
+                                Directory.CreateDirectory(dir);
+                            File.WriteAllText(StorePath, JsonSerializer.Serialize(settings, JsonOptions));
+                        }
+                        catch
+                        {
+                        }
+                        return settings;
+                    }
+                }
+            }
+            catch
+            {
+            }
+        }
+
+        return new AppSettings();
     }
 }

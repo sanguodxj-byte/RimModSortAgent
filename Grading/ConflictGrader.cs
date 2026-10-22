@@ -239,7 +239,7 @@ public static class ConflictGrader
 
             foreach (var dep in mod.Dependencies)
             {
-                var target = index.Resolve(dep.PackageId);
+                var target = ResolveActiveDependencyTarget(index, dep);
                 if (target == null)
                 {
                     var label = string.IsNullOrWhiteSpace(dep.DisplayName)
@@ -266,10 +266,10 @@ public static class ConflictGrader
                     edges.Add(new OrderingEdge(
                         BeforePackageId: target.PackageId,
                         AfterPackageId: mod.PackageId,
-                        IsHardConstraint: true,
-                        Weight: 100,
+                        IsHardConstraint: false,
+                        Weight: 30,
                         SourceKind: "About.modDependencies",
-                        Reason: $"{mod.Name} 强依赖前置 {target.Name}"));
+                        Reason: $"{mod.Name} 依赖前置 {target.Name}"));
                 }
             }
 
@@ -300,9 +300,6 @@ public static class ConflictGrader
                 if (target == null || IsSelf(target, mod))
                     continue;
 
-                if (IsContradictoryBaseDeclaration(mod, target, loadsBefore: false))
-                    continue;
-
                 edges.Add(new OrderingEdge(
                     BeforePackageId: target.PackageId,
                     AfterPackageId: mod.PackageId,
@@ -316,9 +313,6 @@ public static class ConflictGrader
             {
                 var target = index.Resolve(beforeId);
                 if (target == null || IsSelf(target, mod))
-                    continue;
-
-                if (IsContradictoryBaseDeclaration(mod, target, loadsBefore: true))
                     continue;
 
                 edges.Add(new OrderingEdge(
@@ -487,9 +481,9 @@ public static class ConflictGrader
         List<PairwiseConflictFinding> findings)
     {
         var hasSatisfiedBridgeDeps =
-            (mod.Dependencies.Count > 0 && mod.Dependencies.All(d => index.Resolve(d.PackageId) != null)) ||
-            (mod.LoadAfter.Count > 0 && mod.LoadAfter.Any(id => index.Resolve(id) != null)) ||
-            mod.ReferencedExternalAssemblies.Any(a => index.ResolveAssemblyName(a).Count > 0);
+            (mod.Dependencies.Count > 0 && mod.Dependencies.All(d => ResolveActiveDependencyTarget(index, d) != null)) ||
+            (mod.LoadAfter.Count > 0 && mod.LoadAfter.Any(id => ResolveActive(index, id) != null)) ||
+            mod.ReferencedExternalAssemblies.Any(a => index.ResolveAssemblyName(a).Any(m => m.IsActiveInModsConfig));
 
         var evidence = patch.DynamicTargetHints.Count > 0
             ? patch.DynamicTargetHints.Take(5).ToArray()
@@ -791,8 +785,8 @@ public static class ConflictGrader
         var idsA = CollectModIds(modA);
         var idsB = CollectModIds(modB);
 
-        if (modA.Dependencies.Select(d => d.PackageId).Any(idsB.Contains) ||
-            modB.Dependencies.Select(d => d.PackageId).Any(idsA.Contains) ||
+        if (modA.Dependencies.SelectMany(GetDependencyIdentifiers).Any(idsB.Contains) ||
+            modB.Dependencies.SelectMany(GetDependencyIdentifiers).Any(idsA.Contains) ||
             modA.ConditionalLoadFolderMods.Any(idsB.Contains) ||
             modB.ConditionalLoadFolderMods.Any(idsA.Contains))
         {
@@ -1238,37 +1232,34 @@ public static class ConflictGrader
         mod.AssemblyPaths.Any(path =>
             Path.GetFileName(path).Equals("0Harmony.dll", StringComparison.OrdinalIgnoreCase));
 
-    /// <summary>
-    /// 是否为"自相矛盾的底座先后声明"——只有这种声明才该被丢弃。
-    ///
-    /// 底座的先后声明绝大多数是<b>权威顺序</b>，必须生效：官方 DLC 之间只用 forceLoadAfter/forceLoadBefore
-    /// 表达先后（Core → Royalty → Ideology → Biotech → Anomaly → Odyssey），Harmony 声明 loadBefore Core。
-    /// 把这类声明整类丢弃会让 DLC 链彻底失效，乱序输入下甚至能把 Core 排到最后、游戏无法启动。
-    ///
-    /// 真正该丢的只有一种：模组一边依赖对方、一边要求自己排在对方之前（Prepatcher 依赖 Harmony
-    /// 却声明 loadBefore Harmony）。这种声明若生效会凭空造环，才需要跳过。
-    /// </summary>
-    private static bool IsContradictoryBaseDeclaration(ModDescriptor mod, ModDescriptor target, bool loadsBefore)
+    private static ModDescriptor? ResolveActiveDependencyTarget(ModIndex index, ModDependencyItem dep)
     {
-        // 底座之间的声明是官方权威顺序，一律保留。
-        if (IsBaseModule(mod) && IsBaseModule(target))
-            return false;
+        var primary = index.Resolve(dep.PackageId);
+        if (primary is { IsActiveInModsConfig: true })
+            return primary;
 
-        var modDependsOnTarget = DependsOn(mod, target);
-        var targetDependsOnMod = DependsOn(target, mod);
-
-        if (loadsBefore)
+        foreach (var altId in dep.AlternativePackageIds)
         {
-            // 要求自己先于对方，却依赖对方（或已声明 loadAfter 对方）→ 矛盾
-            return modDependsOnTarget || DeclaresOrder(mod, target, loadAfter: true);
+            var alt = index.Resolve(altId);
+            if (alt is { IsActiveInModsConfig: true })
+                return alt;
         }
 
-        // 要求自己后于对方，却反过来被对方依赖（或已声明 loadBefore 对方）→ 矛盾
-        return targetDependsOnMod || DeclaresOrder(mod, target, loadAfter: false);
+        return null;
     }
 
-    private static bool DependsOn(ModDescriptor mod, ModDescriptor target) =>
-        mod.Dependencies.Any(d => IsSameId(d.PackageId, target.PackageId));
+    private static ModDescriptor? ResolveActive(ModIndex index, string rawId)
+    {
+        var mod = index.Resolve(rawId);
+        return mod is { IsActiveInModsConfig: true } ? mod : null;
+    }
+
+    private static IEnumerable<string> GetDependencyIdentifiers(ModDependencyItem dep)
+    {
+        yield return dep.PackageId;
+        foreach (var alt in dep.AlternativePackageIds)
+            yield return alt;
+    }
 
     private static bool DeclaresOrder(ModDescriptor mod, ModDescriptor target, bool loadAfter)
     {

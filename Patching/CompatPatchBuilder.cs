@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
@@ -17,7 +17,6 @@ public sealed record CompatPatchSkip(PlayerConflict Conflict, string Reason);
 /// 把 Agent 的补丁方案合并落成同一个 mod 包：
 /// 每项 Harmony 补丁独立编译成一个 DLL（避免模型源码里的类名互相覆盖），
 /// XML 补丁按冲突分目录写入 Patches/，About.xml 与 README 统一描述全部冲突。
-/// 生成过程不会安装任何东西，安装由 <see cref="CompatPatchInstaller"/> 在用户确认后执行。
 /// </summary>
 public sealed class CompatPatchBuilder
 {
@@ -610,7 +609,9 @@ public sealed class CompatPatchBuilder
         if (dotnet == null)
             return (false, "未找到 dotnet。请安装 .NET 10 SDK，或设置 DOTNET_HOST_PATH 环境变量。");
 
-        var args = $"build \"{csprojPath}\" -c Release -o \"{outputDir}\" --nologo";
+        var nugetConfig = Path.Combine(Path.GetDirectoryName(csprojPath)!, "NuGet.Config");
+        File.WriteAllText(nugetConfig, "<configuration><packageSources><clear /></packageSources></configuration>", new UTF8Encoding(false));
+        var args = $"build \"{csprojPath}\" -c Release -o \"{outputDir}\" --nologo --configfile \"{nugetConfig}\" -p:NuGetAudit=false";
         var startInfo = new ProcessStartInfo(dotnet, args)
         {
             RedirectStandardOutput = true,
@@ -622,6 +623,8 @@ public sealed class CompatPatchBuilder
         startInfo.Environment["DOTNET_CLI_TELEMETRY_OPTOUT"] = "1";
         startInfo.Environment["DOTNET_NOLOGO"] = "1";
         startInfo.Environment["DOTNET_SKIP_FIRST_TIME_EXPERIENCE"] = "1";
+        startInfo.Environment["MSBuildEnableWorkloadResolver"] = "false";
+        startInfo.Environment["DOTNET_CLI_WORKLOAD_UPDATE_NOTIFY_DISABLE"] = "true";
 
         var dotnetDir = Path.GetDirectoryName(dotnet);
         if (!string.IsNullOrWhiteSpace(dotnetDir))
@@ -670,6 +673,10 @@ public sealed class CompatPatchBuilder
 
     private static string? FindDotnet()
     {
+        var bundled = Path.Combine(AppContext.BaseDirectory, "Tools", "dotnet", "dotnet.exe");
+        if (File.Exists(bundled))
+            return bundled;
+
         var candidates = new List<string>();
 
         var host = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
@@ -761,6 +768,9 @@ public sealed class CompatPatchBuilder
 
     private string? FindHarmonyAssembly()
     {
+        var bundled = Path.Combine(AppContext.BaseDirectory, "BundledMods", "Harmony", "1.7", "Assemblies", "0Harmony.dll");
+        if (File.Exists(bundled))
+            return bundled;
         var candidates = new List<string>();
 
         foreach (var modsDir in new[] { Path.Combine(_gameDir, "Mods") })

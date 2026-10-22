@@ -151,6 +151,9 @@ public sealed class ModSortPipelineService : IModSortPipeline
             .Concat(sortResult.CycleConflictFindings)
             .ToList();
 
+        // 排序后置校验：校验集合一致性与有向约束边单调性，失败则阻断管线。
+        SortOrderValidator.ValidateAndThrow(fullyAnalyzed, sortResult);
+
         Report(PipelineStage.TopologicalSort, 5, 1, 1, 90,
             $"排序完成：{sortResult.AppliedEdges.Count} 条约束生效" +
             (sortResult.HardCycleDescriptions.Count > 0 ? $"，{sortResult.HardCycleDescriptions.Count} 处硬性环路已断开" : string.Empty));
@@ -165,6 +168,33 @@ public sealed class ModSortPipelineService : IModSortPipeline
             allFindings,
             useGabsMcp: request.VerifyWithGabs,
             cancellationToken: cancellationToken);
+
+        // ── 阶段 6b：运行期 Harmony 补丁链核验（需要 RuntimePatchProbe companion） ──
+        // 静态分析推断"谁可能 patch 谁"，这里读 Harmony 的真实应用顺序来修正定级：
+        // priority 不同的冲突其实不受加载顺序影响，可降级；priority 相同才是真正的顺序敏感。
+        var runtimeNotes = new List<string>();
+        if (request.VerifyWithGabs)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            Report(PipelineStage.LiveVerification, 6, 1, 2, 94, "正在读取运行期 Harmony 补丁链…");
+
+            var runtimeOutcome = RuntimePatchVerifier.Query(
+                GabsLiveVerifier.DefaultGabsExePath,
+                cancellationToken: cancellationToken);
+
+            if (runtimeOutcome.Available)
+            {
+                var refinedCount = RuntimePatchVerifier.RefineFindings(runtimeOutcome, allFindings);
+                runtimeNotes.Add(runtimeOutcome.Status);
+                if (refinedCount > 0)
+                    runtimeNotes.Add($"其中 {refinedCount} 项的处置建议已按实际 priority 修正（次序已由 priority 锁死，重排加载顺序无效）。");
+            }
+            else
+            {
+                runtimeNotes.Add(runtimeOutcome.Status);
+                runtimeNotes.AddRange(runtimeOutcome.Notes);
+            }
+        }
 
         Report(PipelineStage.LiveVerification, 6, 2, 2, 96,
             gabsSummary.Connected
@@ -186,7 +216,12 @@ public sealed class ModSortPipelineService : IModSortPipeline
             analysisDurationMs: clock.ElapsedMilliseconds,
             tierByPackageId: sortResult.TierByPackageId,
             unresolvedTokens: unresolvedTokens.Concat(poolUnresolved).ToList(),
-            workshopScan: workshopScan);
+            workshopScan: workshopScan,
+            runtimePatchNotes: runtimeNotes) with
+        {
+            RejectedHardOrderingEdges = sortResult.BrokenEdges,
+            DroppedSoftOrderingEdges = sortResult.DroppedSoftEdges.Select(item => item.Edge).ToArray()
+        };
 
         var markdown = ModSortReportBuilder.FormatMarkdownReport(report);
 
@@ -199,7 +234,10 @@ public sealed class ModSortPipelineService : IModSortPipeline
             MarkdownReport: markdown,
             KnownExpansions: request.KnownExpansions,
             EffectiveGameVersion: request.TargetGameVersion,
-            Mods: fullyAnalyzed);
+            Mods: fullyAnalyzed)
+        {
+            UnresolvedActiveTokens = unresolvedTokens.ToArray()
+        };
     }
 
     /// <summary>

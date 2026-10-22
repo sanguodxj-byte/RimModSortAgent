@@ -911,23 +911,17 @@ public sealed class ModListResolver
         return false;
     }
 
-    private static List<ModDependencyItem> ExtractDependencies(XElement aboutRoot, string gameVersion)
+    internal static List<ModDependencyItem> ExtractDependencies(XElement aboutRoot, string gameVersion)
     {
         var list = new List<ModDependencyItem>();
         var majorMinor = ExtractMajorMinorVersion(gameVersion);
 
-        var depNodes = new List<XElement>();
         var baseDeps = GetElementIgnoreCase(aboutRoot, "modDependencies");
-        if (baseDeps != null)
-            depNodes.AddRange(baseDeps.Elements("li"));
-
         var byVersion = GetElementIgnoreCase(aboutRoot, "modDependenciesByVersion");
-        if (byVersion != null)
-        {
-            var verElem = FindBestVersionElement(byVersion, majorMinor);
-            if (verElem != null)
-                depNodes.AddRange(verElem.Elements("li"));
-        }
+        var selected = FindExactVersionElement(byVersion, majorMinor) ?? baseDeps;
+        var depNodes = selected?.Elements()
+            .Where(e => e.Name.LocalName.Equals("li", StringComparison.OrdinalIgnoreCase))
+            ?? Enumerable.Empty<XElement>();
 
         foreach (var li in depNodes)
         {
@@ -937,9 +931,29 @@ public sealed class ModListResolver
 
             var displayName = GetElementValueIgnoreCase(li, "displayName");
             var normalizedId = NormalizePackageId(pkgId);
-            if (list.All(d => !d.PackageId.Equals(normalizedId, StringComparison.OrdinalIgnoreCase)))
+            var altPackageIds = ExtractStringListByTag(li, "alternativePackageIds")
+                .Select(NormalizePackageId)
+                .Where(alt => !alt.Equals(normalizedId, StringComparison.OrdinalIgnoreCase))
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToList();
+
+            var existing = list.FirstOrDefault(d => d.PackageId.Equals(normalizedId, StringComparison.OrdinalIgnoreCase));
+            if (existing == null)
             {
-                list.Add(new ModDependencyItem(normalizedId, displayName));
+                list.Add(new ModDependencyItem(normalizedId, displayName, altPackageIds));
+            }
+            else
+            {
+                var mergedAlts = existing.AlternativePackageIds
+                    .Concat(altPackageIds)
+                    .Distinct(StringComparer.OrdinalIgnoreCase)
+                    .ToList();
+                var idx = list.IndexOf(existing);
+                list[idx] = existing with
+                {
+                    DisplayName = existing.DisplayName ?? displayName,
+                    AlternativePackageIds = mergedAlts
+                };
             }
         }
 
@@ -952,26 +966,26 @@ public sealed class ModListResolver
         string versionedTag,
         string gameVersion)
     {
-        var items = new List<string>();
-        items.AddRange(ExtractStringListByTag(aboutRoot, baseTag));
-
-        var byVer = GetElementIgnoreCase(aboutRoot, versionedTag);
-        if (byVer != null)
-        {
-            var majorMinor = ExtractMajorMinorVersion(gameVersion);
-            var verElem = FindBestVersionElement(byVer, majorMinor);
-            if (verElem != null)
-            {
-                items.AddRange(verElem.Elements("li")
-                    .Select(e => e.Value.Trim())
-                    .Where(v => !string.IsNullOrWhiteSpace(v)));
-            }
-        }
-
-        return items
+        var selected = FindExactVersionElement(GetElementIgnoreCase(aboutRoot, versionedTag), ExtractMajorMinorVersion(gameVersion))
+            ?? GetElementIgnoreCase(aboutRoot, baseTag);
+        return (selected?.Elements() ?? Enumerable.Empty<XElement>())
+            .Where(e => e.Name.LocalName.Equals("li", StringComparison.OrdinalIgnoreCase))
+            .Select(e => e.Value.Trim())
+            .Where(v => !string.IsNullOrWhiteSpace(v))
             .Select(NormalizePackageId)
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
+    }
+
+    private static XElement? FindExactVersionElement(XElement? root, string version)
+    {
+        return root?.Elements().FirstOrDefault(e =>
+        {
+            var key = e.Name.LocalName;
+            if (key.StartsWith('v') || key.StartsWith('V'))
+                key = key[1..];
+            return key.Equals(version, StringComparison.OrdinalIgnoreCase);
+        });
     }
 
     private static List<string> ExtractStringListByTag(XElement parent, string tagName)
@@ -980,10 +994,13 @@ public sealed class ModListResolver
         if (elem == null)
             return new List<string>();
 
-        return elem.Elements("li")
+        var liElements = elem.Elements()
+            .Where(e => e.Name.LocalName.Equals("li", StringComparison.OrdinalIgnoreCase))
             .Select(e => e.Value.Trim())
             .Where(v => !string.IsNullOrWhiteSpace(v))
             .ToList();
+
+        return liElements;
     }
 
     private static XElement? GetElementIgnoreCase(XElement parent, string localName)

@@ -6,4 +6,6 @@ artifacts/
 AppSettings.json
 .workbuddy/
 .opencode/
+.zcode/
+SortProfiles.json
 

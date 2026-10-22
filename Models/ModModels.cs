@@ -38,9 +38,41 @@ public sealed record PipelineProgressReport(
     string StatusText,
     long ElapsedMs);
 
-public sealed record ModDependencyItem(
-    string PackageId,
-    string? DisplayName);
+public sealed record ModDependencyItem
+{
+    public string PackageId { get; init; }
+    public string? DisplayName { get; init; }
+    public IReadOnlyList<string> AlternativePackageIds { get; init; }
+
+    [JsonConstructor]
+    public ModDependencyItem(
+        string packageId,
+        string? displayName,
+        IReadOnlyList<string>? alternativePackageIds = null)
+    {
+        PackageId = packageId;
+        DisplayName = displayName;
+        AlternativePackageIds = alternativePackageIds ?? Array.Empty<string>();
+    }
+
+    public ModDependencyItem(string packageId, string? displayName)
+        : this(packageId, displayName, Array.Empty<string>())
+    {
+    }
+
+    public void Deconstruct(out string packageId, out string? displayName)
+    {
+        packageId = PackageId;
+        displayName = DisplayName;
+    }
+
+    public void Deconstruct(out string packageId, out string? displayName, out IReadOnlyList<string> alternativePackageIds)
+    {
+        packageId = PackageId;
+        displayName = DisplayName;
+        alternativePackageIds = AlternativePackageIds;
+    }
+}
 
 public sealed record XmlDefRecord(
     string DefType,
@@ -206,6 +238,8 @@ public sealed record ModSortReport(
     public int TotalXmlPatchCount { get; init; }
     public long AnalysisDurationMs { get; init; }
     public IReadOnlyList<string> UnresolvedTokens { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<OrderingEdge> RejectedHardOrderingEdges { get; init; } = Array.Empty<OrderingEdge>();
+    public IReadOnlyList<OrderingEdge> DroppedSoftOrderingEdges { get; init; } = Array.Empty<OrderingEdge>();
 
     // ── 工坊订阅检测 ──
     /// <summary>本次分析是否启用了「含工坊订阅」范围。</summary>
@@ -230,4 +264,10 @@ public sealed record ModSortReport(
     /// 排序结果中相邻两模组违反"架构分层"启发式的次数。用于诊断分层质量，不影响正确性。
     /// </summary>
     public int TierInversionCount { get; init; }
+
+    /// <summary>
+    /// 运行期 Harmony 补丁链核验的结论（需要 RuntimePatchProbe companion 模组）。
+    /// 空表示未执行或不可用；内容为人类可读的状态说明。
+    /// </summary>
+    public IReadOnlyList<string> RuntimePatchNotes { get; init; } = Array.Empty<string>();
 }

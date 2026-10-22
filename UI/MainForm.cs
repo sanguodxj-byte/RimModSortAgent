@@ -1,4 +1,4 @@
-using System.Diagnostics;
+﻿using System.Diagnostics;
 using System.Drawing.Drawing2D;
 using System.Drawing.Text;
 using System.Text;
@@ -10,7 +10,9 @@ using ModSorterAgent.Models;
 using ModSorterAgent.Patching;
 using ModSorterAgent.Reporting;
 using ModSorterAgent.Services;
+using ModSorterAgent.Sorting;
 using ModSorterAgent.UI.Controls;
+using ModSorterAgent.Verification;
 
 namespace ModSorterAgent.UI;
 
@@ -47,13 +49,13 @@ public sealed class MainForm : Form
 
 
     private readonly ModernButton _btnAnalyze = new("开始分析", ButtonVariant.Primary);
-    private readonly ModernButton _btnStop = new("停止", ButtonVariant.Ghost);
-    private readonly ModernButton _btnImport = new("导入列表 ▾", ButtonVariant.Secondary);
+    private readonly ModernButton _btnStop = new("停止", ButtonVariant.Secondary);
+    private readonly ModernButton _btnImport = new("导入列表", ButtonVariant.Secondary);
     private readonly ModernButton _btnApply = new("写入配置", ButtonVariant.Secondary);
-    private readonly ModernButton _btnExport = new("导出列表 ▾", ButtonVariant.Ghost);
+    private readonly ModernButton _btnExport = new("导出列表", ButtonVariant.Secondary);
     private readonly ModernButton _btnLaunchGame = new("启动游戏", ButtonVariant.Secondary);
 
-    private readonly ModernButton _btnSortLists = new("排序列表 ▾", ButtonVariant.Ghost);
+    private readonly ModernButton _btnSortLists = new("排序列表", ButtonVariant.Ghost);
 
     private readonly SortProfileStore _profileStore = new();
 
@@ -65,7 +67,8 @@ public sealed class MainForm : Form
     private readonly SectionCard _detailCard = new("冲突详情", "未选择");
 
     private readonly ModernButton _btnDeepCheck = new("深度核查", ButtonVariant.Secondary);
-    private readonly ModernButton _btnBuildPatch = new("兼容生成", ButtonVariant.Primary);
+    private readonly ModernButton _btnBuildPatch = new("兼容生成", ButtonVariant.Secondary);
+    private readonly ModernButton _btnLiveVerify = new("实机验证", ButtonVariant.Secondary);
 
     private readonly PurpleChoicePanel _purpleChoicePanel = new();
     private readonly Dictionary<string, PurpleChoice> _purpleChoices = new(StringComparer.OrdinalIgnoreCase);
@@ -77,14 +80,13 @@ public sealed class MainForm : Form
     private readonly HashSet<string> _bundledConflictKeys = new(StringComparer.OrdinalIgnoreCase);
     private CompatPatchResult? _patchBundle;
     private string? _bundleInstalledPath;
-    private readonly HashSet<string> _checkingKeys = new(StringComparer.OrdinalIgnoreCase);
+    private bool _liveVerifierRunning;
 
     private AgentInvestigator? _investigator;
     private List<PlayerConflict> _modConflicts = new();
     private bool _agentBusy;
     private bool _includeWorkshopFromCli;
     private CancellationTokenSource? _agentCts;
-    private Task _modCheckTask = Task.CompletedTask;
 
     private readonly Label _statusLabel = new();
     private readonly WindowChromeButton _btnMaximize = new(WindowChromeButton.WindowControlKind.Maximize);
@@ -192,6 +194,39 @@ public sealed class MainForm : Form
             BackColor = Color.FromArgb(15, 18, 24)
         };
 
+        var windowButtons = new FlowLayoutPanel
+        {
+            Dock = DockStyle.Right,
+            AutoSize = true,
+            AutoSizeMode = AutoSizeMode.GrowAndShrink,
+            FlowDirection = FlowDirection.LeftToRight,
+            WrapContents = false,
+            BackColor = UiTheme.TitleBarBg,
+            Padding = new Padding(0, UiTheme.Scale(titleBar, 5), UiTheme.Scale(titleBar, 6), 0)
+        };
+
+        var btnSettings = new WindowChromeButton(WindowChromeButton.WindowControlKind.Settings) { Margin = Padding.Empty };
+        btnSettings.Click += (_, _) => ShowSettingsDialog();
+
+        var btnMinimize = new WindowChromeButton(WindowChromeButton.WindowControlKind.Minimize) { Margin = Padding.Empty };
+        _btnMaximize.Margin = Padding.Empty;
+        var btnClose = new WindowChromeButton(WindowChromeButton.WindowControlKind.Close) { Margin = Padding.Empty };
+
+        btnMinimize.Click += (_, _) => WindowState = FormWindowState.Minimized;
+        _btnMaximize.Click += (_, _) => ToggleMaximize();
+        btnClose.Click += (_, _) => Close();
+
+        _chromeTips.SetToolTip(btnSettings, "设置 (Ctrl+,)");
+        _chromeTips.SetToolTip(btnMinimize, "最小化");
+        _chromeTips.SetToolTip(btnClose, "关闭");
+        UpdateWindowButtonTips();
+
+        windowButtons.Controls.Add(btnSettings);
+        windowButtons.Controls.Add(btnMinimize);
+        windowButtons.Controls.Add(_btnMaximize);
+        windowButtons.Controls.Add(btnClose);
+        titleBar.Controls.Add(windowButtons);
+
         titleBar.Paint += (_, e) =>
         {
             var g = e.Graphics;
@@ -234,15 +269,16 @@ public sealed class MainForm : Form
                     dividerX, titleBar.Height - UiTheme.Scale(titleBar, 13));
 
             var subtitleLeft = dividerX + UiTheme.Scale(titleBar, 11);
-            var subtitleWidth = Math.Max(0, titleBar.Width - UiTheme.Scale(titleBar, 210) - subtitleLeft);
+            var buttonsLeft = windowButtons.Left > 0 ? windowButtons.Left : titleBar.Width - UiTheme.Scale(titleBar, 180);
+            var subtitleWidth = Math.Max(0, buttonsLeft - UiTheme.Scale(titleBar, 20) - subtitleLeft);
             UiTheme.DrawText(g, "静态代码冲突分级 · 分层拓扑排序", UiTheme.SmallFont,
                 new Rectangle(subtitleLeft, 0, subtitleWidth, titleBar.Height),
                 UiTheme.TextMuted,
                 TextFormatFlags.Left | TextFormatFlags.VerticalCenter | TextFormatFlags.EndEllipsis);
 
             using (var edge = new Pen(UiTheme.BorderSubtle, 1f))
-                g.DrawLine(edge, titleBar.Width - UiTheme.Scale(titleBar, 188), UiTheme.Scale(titleBar, 11),
-                    titleBar.Width - UiTheme.Scale(titleBar, 188), titleBar.Height - UiTheme.Scale(titleBar, 11));
+                g.DrawLine(edge, buttonsLeft - UiTheme.Scale(titleBar, 8), UiTheme.Scale(titleBar, 11),
+                    buttonsLeft - UiTheme.Scale(titleBar, 8), titleBar.Height - UiTheme.Scale(titleBar, 11));
 
             using var line = new Pen(UiTheme.BorderSubtle, 1f);
             g.DrawLine(line, 0, titleBar.Height - 1, titleBar.Width, titleBar.Height - 1);
@@ -258,38 +294,6 @@ public sealed class MainForm : Form
         };
 
         titleBar.MouseDoubleClick += (_, _) => ToggleMaximize();
-
-        var windowButtons = new FlowLayoutPanel
-        {
-            Dock = DockStyle.Right,
-            Width = 172,
-            FlowDirection = FlowDirection.LeftToRight,
-            WrapContents = false,
-            BackColor = UiTheme.TitleBarBg,
-            Padding = new Padding(0, 5, 4, 0)
-        };
-
-        var btnSettings = new WindowChromeButton(WindowChromeButton.WindowControlKind.Settings);
-        btnSettings.Click += (_, _) => ShowSettingsDialog();
-
-        var btnMinimize = new WindowChromeButton(WindowChromeButton.WindowControlKind.Minimize);
-
-        var btnClose = new WindowChromeButton(WindowChromeButton.WindowControlKind.Close);
-
-        btnMinimize.Click += (_, _) => WindowState = FormWindowState.Minimized;
-        _btnMaximize.Click += (_, _) => ToggleMaximize();
-        btnClose.Click += (_, _) => Close();
-
-        _chromeTips.SetToolTip(btnSettings, "设置 (Ctrl+,)");
-        _chromeTips.SetToolTip(btnMinimize, "最小化");
-        _chromeTips.SetToolTip(btnClose, "关闭");
-        UpdateWindowButtonTips();
-
-        windowButtons.Controls.Add(btnSettings);
-        windowButtons.Controls.Add(btnMinimize);
-        windowButtons.Controls.Add(_btnMaximize);
-        windowButtons.Controls.Add(btnClose);
-        titleBar.Controls.Add(windowButtons);
 
         var commandBar = new Panel
         {
@@ -339,22 +343,18 @@ public sealed class MainForm : Form
             Padding = new Padding(0)
         };
 
-        foreach (var button in new[] { _btnAnalyze, _btnStop, _btnDeepCheck, _btnBuildPatch, _btnImport, _btnExport, _btnApply })
+        // 排列顺序：命令（分析/停止）→ 数据（导入/导出）→ Agent 三键 → 写入配置
+        foreach (var button in new[] { _btnAnalyze, _btnStop, _btnImport, _btnExport, _btnDeepCheck, _btnBuildPatch, _btnLiveVerify, _btnApply })
         {
             button.Height = 30;
             button.Margin = new Padding(0, 0, 6, 0);
             leftFlow.Controls.Add(button);
         }
 
-        _btnAnalyze.LeadingGlyph = "▶";
-        _btnStop.LeadingGlyph = "■";
-        _btnDeepCheck.LeadingGlyph = "◎";
-        _btnBuildPatch.LeadingGlyph = "◈";
-        _btnApply.LeadingGlyph = "◆";
+        // 命令栏只留文字：亮/暗由状态表达，蓝色只属于「开始分析」
         _chromeTips.SetToolTip(_btnDeepCheck, "对全部生效冲突逐项做模型深度核查，不只当前模组");
         _chromeTips.SetToolTip(_btnBuildPatch, "对全部生效冲突统一复核，生成一个合并兼容补丁包");
-        _btnLaunchGame.LeadingGlyph = "▶";
-        _btnLaunchGame.LeadingGlyphColor = UiTheme.Green;
+        _chromeTips.SetToolTip(_btnLiveVerify, "由 Agent 操作 RimWorld 实机取证并逐条核验冲突");
 
         commandBar.Controls.Add(leftFlow);
         commandBar.Controls.Add(rightFlow);
@@ -534,6 +534,7 @@ public sealed class MainForm : Form
 
         _btnDeepCheck.Click += async (_, _) => await DeepCheckAsync();
         _btnBuildPatch.Click += async (_, _) => await BuildPatchAsync();
+        _btnLiveVerify.Click += async (_, _) => await RunLiveVerificationAsync();
         _purpleChoicePanel.ChoiceChanged += (_, e) => OnPurpleChoiceChanged(e);
 
         KeyDown += OnFormKeyDown;
@@ -553,15 +554,6 @@ public sealed class MainForm : Form
                 }
 
                 await RunAnalysisAsync(true);
-                try
-                {
-                    await _modCheckTask;
-                }
-                catch
-                {
-                    // 截图不因核查失败而中断
-                }
-
                 await CaptureScreenshotAsync(_autoScreenshotPath!);
                 if (_exitAfterScreenshot)
                     Close();
@@ -614,10 +606,7 @@ public sealed class MainForm : Form
         if (_lastResult != null)
         {
             _investigator?.Dispose();
-            _investigator = new AgentInvestigator(
-                AgentConfigLoader.Load(saved),
-                _lastResult.Mods,
-                ModListResolver.PathOptions.RimWorldInstallDir);
+            _investigator = null;
 
             // 模型配置变化后，旧的模型结论不再可信；本地结论仍可复用
             foreach (var key in _agentReports
@@ -631,7 +620,14 @@ public sealed class MainForm : Form
             UpdateDetailForMod();
         }
 
-        SetStatus($"设置已保存：游戏目录 {installDir} · Agent {(_investigator?.ModeLabel ?? "本地代码核查")}");
+        var agentCfg = AgentConfigLoader.Load(saved);
+        var agentLabel = agentCfg.IsPlayer2
+            ? "模型核查 · Player2"
+            : agentCfg.IsConfigured
+                ? $"模型核查 · {agentCfg.Model}"
+                : "本地代码核查";
+
+        SetStatus($"设置已保存：游戏目录 {installDir} · Agent {agentLabel}");
         if (_lastResult != null)
             SetStatus("路径或 Agent 设置已变更；路径变化时建议重新执行分析");
     }
@@ -709,7 +705,7 @@ public sealed class MainForm : Form
 
         if (profiles.Count > 0)
         {
-            var deleteMenu = new ToolStripMenuItem("删除排序 ▾")
+            var deleteMenu = new ToolStripMenuItem("删除排序")
             {
                 ForeColor = UiTheme.TextPrimary,
                 BackColor = Color.Transparent,
@@ -733,8 +729,8 @@ public sealed class MainForm : Form
     {
         var active = _profileStore.GetActiveProfile();
         _btnSortLists.Text = active == null
-            ? "排序列表 ▾"
-            : $"排序: {TrimForButton(active.Name)} ({active.PackageIds.Count}) ▾";
+            ? "排序列表"
+            : $"排序: {TrimForButton(active.Name)} ({active.PackageIds.Count})";
     }
 
     private static string TrimForButton(string name)
@@ -744,18 +740,23 @@ public sealed class MainForm : Form
     }
 
     /// <summary>
-    /// 切换激活排序：更新激活标记后立即按快照写入 ModsConfig.xml（写前自动备份）。
+    /// 切换激活排序：先校验排序约束，验证通过且写入成功后才切换激活标记（写前自动备份）。
     /// </summary>
     private void ActivateProfile(SortListProfile profile)
     {
-        _profileStore.SetActive(profile.Name);
-        RefreshSortListsButton();
-
+        var previousActive = _profileStore.ActiveProfileName;
         var target = ModListResolver.DefaultModsConfigPath;
         try
         {
+            var outcome = ProfileValidationService.ValidateProfile(profile);
+            if (!outcome.IsValid)
+                throw new SortValidationException($"排序列表「{profile.Name}」校验未通过，已阻止写入", outcome.Result);
+
             var backup = ModSortReportBuilder.ApplyPackageIdsWithBackup(
                 target, profile.GameVersion, profile.PackageIds, profile.KnownExpansions);
+
+            _profileStore.SetActive(profile.Name);
+            RefreshSortListsButton();
 
             SetStatus(backup == null
                 ? $"已切换到排序「{profile.Name}」并写入 {target}（原文件不存在，未生成备份）"
@@ -763,6 +764,8 @@ public sealed class MainForm : Form
         }
         catch (Exception ex)
         {
+            _profileStore.SetActive(previousActive);
+            RefreshSortListsButton();
             ShowFriendlyError($"切换排序「{profile.Name}」失败", ex);
         }
     }
@@ -780,6 +783,13 @@ public sealed class MainForm : Form
         if (activeIds.Count == 0)
         {
             SetStatus("当前分析没有启用模组，未保存排序");
+            return;
+        }
+
+        var validation = SortOrderValidator.ValidateActiveModSet(activeIds, _lastResult);
+        if (!validation.IsValid)
+        {
+            ShowFriendlyError("保存排序列表失败", new SortValidationException(validation));
             return;
         }
 
@@ -820,6 +830,9 @@ public sealed class MainForm : Form
 
         var activeIds = GetEffectiveActivePackageIds();
         if (activeIds.Count == 0)
+            return false;
+
+        if (!SortOrderValidator.ValidateActiveModSet(activeIds, _lastResult).IsValid)
             return false;
 
         const string autoSaveName = "自动保存";
@@ -1093,11 +1106,9 @@ public sealed class MainForm : Form
         _bundledConflictKeys.Clear();
         _patchBundle = null;
         _bundleInstalledPath = null;
-        _checkingKeys.Clear();
 
         _modConflicts = new List<PlayerConflict>();
         _selectedMod = null;
-        _modCheckTask = Task.CompletedTask;
         _purpleChoices.Clear();
         _purpleChoicePanel.SetChoices(Array.Empty<PurpleChoiceRow>());
 
@@ -1294,6 +1305,15 @@ public sealed class MainForm : Form
                     : $"启动前备份：{Path.GetFileName(snapshot)}";
             }
 
+            // 无论磁盘当前顺序是否匹配，启动前必须先校验激活排序的依赖与加载约束
+            var outcome = ProfileValidationService.ValidateProfile(profile);
+            if (!outcome.IsValid)
+            {
+                throw new SortValidationException(
+                    $"激活的排序「{profile.Name}」最终启用集合校验未通过，已阻止写入",
+                    outcome.Result);
+            }
+
             var expected = profile.PackageIds
                 .Select(id => id.Trim().ToLowerInvariant())
                 .Where(id => id.Length > 0)
@@ -1412,7 +1432,7 @@ public sealed class MainForm : Form
     }
 
     /// <summary>
-    /// 分析完成后准备右侧详情所需的数据：玩家视角冲突清单 + 带真实代码取证的 Agent。
+    /// 分析完成后准备右侧详情所需的数据：玩家视角冲突清单。
     /// 列表仍保持原有排序/评级视图，不在这里改动。
     /// </summary>
     private void PrepareConflictWorkspace(PipelineResult result)
@@ -1426,17 +1446,12 @@ public sealed class MainForm : Form
         _bundledConflictKeys.Clear();
         _patchBundle = null;
         _bundleInstalledPath = null;
-        _checkingKeys.Clear();
 
         _modConflicts = new List<PlayerConflict>();
-        _modCheckTask = Task.CompletedTask;
         InitializePurpleChoices();
 
         _investigator?.Dispose();
-        _investigator = new AgentInvestigator(
-            AgentConfigLoader.Load(ModListResolver.PathOptions.Settings),
-            result.Mods,
-            ModListResolver.PathOptions.RimWorldInstallDir);
+        _investigator = null;
     }
 
     private void BindReport(ModSortReport report)
@@ -1582,8 +1597,6 @@ public sealed class MainForm : Form
 
         UpdateDetailForMod();
         UpdateCommandStates();
-
-        _modCheckTask = EnsureModConflictsCheckedAsync(mod);
     }
 
     private static bool Involves(PlayerConflict conflict, string packageId)
@@ -1746,88 +1759,34 @@ public sealed class MainForm : Form
         }
 
         var verified = _modConflicts.Count(c => _agentReports.ContainsKey(c.Key));
-        var checking = _modConflicts.Count(c => _checkingKeys.Contains(c.Key));
         _detailCard.HeaderTitle = $"详情 · {_selectedMod.Name}";
         _detailCard.HeaderMeta = _modConflicts.Count == 0
             ? "没有需要处理的冲突"
-            : checking > 0
-                ? $"共 {_modConflicts.Count} 项 · 核查中 {checking}"
-                : $"共 {_modConflicts.Count} 项 · 已核查 {verified}/{_modConflicts.Count}";
+            : $"共 {_modConflicts.Count} 项 · 已核查 {verified}/{_modConflicts.Count}";
 
         UpdatePurplePanel();
         _inspector.ShowDocument(BuildModDocument(_selectedMod));
         UpdateCommandStates();
     }
 
-    /// <summary>
-    /// 选中模组后自动对其冲突做本地代码核查：反编译双方补丁、读取目标方法、抽取 XML 原文。
-    /// 结论先落到详情里，玩家不需要手动点"开始核查"。
-    /// </summary>
-    private async Task EnsureModConflictsCheckedAsync(ModGradeSummary mod)
+    private void EnsureInvestigator()
     {
-        if (_investigator == null)
-            return;
-
-        var targets = _playerConflicts
-            .Where(c => Involves(c, mod.PackageId) && !_agentReports.ContainsKey(c.Key))
-            .OrderByDescending(c => c.Grade)
-            .Take(8)
-            .ToList();
-
-        var completed = 0;
-        var failed = 0;
-
-        foreach (var conflict in targets)
+        if (_investigator == null && _lastResult != null)
         {
-            if (!_checkingKeys.Add(conflict.Key))
-                continue;
-
-            try
-            {
-                SetStatus($"Agent 正在读取双方代码：{conflict.PairLabel}…");
-                var report = await _investigator.InvestigateAsync(conflict, CancellationToken.None, useModel: false);
-
-                // 模型结论优先：本地核查结果不得覆盖已经完成的模型核查
-                if (!_agentReports.TryGetValue(report.ConflictKey, out var existing) ||
-                    existing.Mode.Equals("本地代码核查", StringComparison.Ordinal))
-                {
-                    _agentReports[report.ConflictKey] = report;
-                }
-
-                completed++;
-            }
-            catch (OperationCanceledException)
-            {
-                // 关闭窗口或切换列表时忽略
-            }
-            catch (Exception ex)
-            {
-                failed++;
-                SetStatus($"代码核查失败：{ex.Message}");
-            }
-            finally
-            {
-                _checkingKeys.Remove(conflict.Key);
-
-                if (_selectedMod != null)
-                    UpdateDetailForMod();
-            }
+            _investigator = new AgentInvestigator(
+                AgentConfigLoader.Load(ModListResolver.PathOptions.Settings),
+                _lastResult.Mods,
+                ModListResolver.PathOptions.RimWorldInstallDir);
         }
-
-        if (completed > 0 && _selectedMod != null)
-        {
-            SetStatus(failed > 0
-                ? $"本地代码核查完成 {completed} 项，{failed} 项失败"
-                : $"本地代码核查完成：{completed} 项冲突已给出结论");
-        }
-
-        UpdateCommandStates();
     }
 
     // ───────────────────────────── Agent 与补丁动作 ─────────────────────────────
 
     private async Task DeepCheckAsync()
     {
+        if (_agentBusy || _busy || _liveVerifierRunning)
+            return;
+
         var conflicts = GetAgentScopeConflicts();
         if (_lastResult == null || conflicts.Count == 0)
         {
@@ -1835,6 +1794,7 @@ public sealed class MainForm : Form
             return;
         }
 
+        EnsureInvestigator();
         if (_investigator?.UsesModel != true)
         {
             var answer = MessageBox.Show(
@@ -1853,50 +1813,66 @@ public sealed class MainForm : Form
         _agentBusy = true;
         UpdateCommandStates();
 
+        _investigator.ClearModelCache();
+        foreach (var conflict in conflicts)
+        {
+            if (_agentReports.TryGetValue(conflict.Key, out var existing) &&
+                existing.Mode.Equals("本地代码核查", StringComparison.Ordinal))
+            {
+                _agentReports.Remove(conflict.Key);
+            }
+        }
+
         _agentCts?.Dispose();
         _agentCts = new CancellationTokenSource();
 
-        var completed = 0;
-        var failed = 0;
+        // 深度核查与兼容生成、实机验证共用同一个接管窗口：过程实时可见、可停止、可投喂要求。
+        var guidance = new AgentGuidanceChannel();
+        var console = new AgentConsoleForm("Agent · 深度核查");
+        console.CancelRequested += (_, _) => _agentCts?.Cancel();
+        console.MessageSent += (_, text) => guidance.Post(text);
 
         try
         {
-            for (var i = 0; i < conflicts.Count; i++)
-            {
-                _agentCts.Token.ThrowIfCancellationRequested();
-                var conflict = conflicts[i];
-                SetStatus($"模型深度核查 {i + 1}/{conflicts.Count}：{conflict.PairLabel}…");
+            _investigator!.LiveSink = console;
+            _investigator.Guidance = guidance;
 
-                try
-                {
-                    var report = await _investigator.InvestigateAsync(conflict, _agentCts.Token, useModel: true);
-                    _agentReports[report.ConflictKey] = report;
-                    completed++;
-                }
-                catch (OperationCanceledException)
-                {
-                    throw;
-                }
-                catch (Exception ex)
-                {
-                    failed++;
-                    SetStatus($"深度核查失败：{conflict.PairLabel} · {ex.Message}");
-                }
+            var progress = new Progress<(int Done, int Total, string Label)>(p =>
+                SetStatus($"模型深度核查 {p.Done}/{p.Total}：{p.Label}…"));
 
-                if (_selectedMod != null)
-                    UpdateDetailForMod();
-            }
+            var checkTask = _investigator.InvestigateAllAsync(
+                conflicts,
+                progress,
+                _agentCts.Token,
+                useModel: true,
+                onReport: report => _agentReports[report.ConflictKey] = report,
+                liveTitle: "Agent · 深度核查");
 
-            SetStatus(failed > 0
-                ? $"深度核查完成 {completed}/{conflicts.Count} 项，{failed} 项失败"
-                : $"深度核查完成：{completed} 项生效冲突已由模型复核");
+            console.TakeOver(this);
+            var reports = await checkTask;
+
+            UpdateDetailForMod();
+            SetStatus($"深度核查完成：{reports.Count} 项生效冲突已由模型复核");
         }
         catch (OperationCanceledException)
         {
+            console.Fail("已停止");
             SetStatus("已停止深度核查");
+        }
+        catch (Exception ex)
+        {
+            console.Fail("深度核查失败：" + ex.Message);
+            SetStatus($"深度核查失败：{ex.Message}");
+            MessageBox.Show(this, ex.Message, "Agent 深度核查", MessageBoxButtons.OK, MessageBoxIcon.Warning);
         }
         finally
         {
+            if (_investigator != null)
+            {
+                _investigator.LiveSink = null;
+                _investigator.Guidance = null;
+            }
+
             _agentBusy = false;
             _agentCts?.Dispose();
             _agentCts = null;
@@ -1908,7 +1884,14 @@ public sealed class MainForm : Form
 
     private async Task BuildPatchAsync()
     {
-        if (_lastResult == null || _investigator == null)
+        if (_agentBusy || _busy || _liveVerifierRunning)
+            return;
+
+        if (_lastResult == null)
+            return;
+
+        EnsureInvestigator();
+        if (_investigator == null)
             return;
 
         var conflicts = GetAgentScopeConflicts();
@@ -1944,6 +1927,15 @@ public sealed class MainForm : Form
         UpdateCommandStates();
         SetStatus($"内部 Agent 正在复核 {reviewCount} 项生效冲突…");
 
+        // 补丁生成期间由 Agent 窗口接管，过程实时可见。窗口在关闭时自行释放，
+        // 不用 using：跑完后要留在屏幕上等用户看完结果再点返回。
+        // 玩家在窗口里投递的要求写进通道，会带进之后每一次模型调用。
+        var guidance = new AgentGuidanceChannel();
+        var console = new AgentConsoleForm("Agent · 兼容补丁生成");
+        console.CancelRequested += (_, _) => _agentCts?.Cancel();
+        console.MessageSent += (_, text) => guidance.Post(text);
+        _investigator.Guidance = guidance;
+
         CompatPatchResult? patch = null;
         try
         {
@@ -1951,12 +1943,18 @@ public sealed class MainForm : Form
                 SetStatus($"Agent 复核 {p.Done}/{p.Total} · {p.Label}"));
 
             var coordinator = new CompatBundleAgent(_investigator);
-            var work = await coordinator.ReviewAsync(
+
+            var reviewTask = coordinator.ReviewAsync(
                 conflicts,
                 progress,
                 _agentCts.Token,
                 onReport: null,
-                approvedAuthorDeclared: approvedExplicitKeys);
+                approvedAuthorDeclared: approvedExplicitKeys,
+                liveSink: console,
+                liveTitle: "Agent · 兼容补丁生成");
+
+            console.TakeOver(this);
+            var work = await reviewTask;
 
             foreach (var report in work.Reports)
                 _agentReports[report.ConflictKey] = report;
@@ -2010,11 +2008,13 @@ public sealed class MainForm : Form
         }
         catch (OperationCanceledException)
         {
+            console.Fail("已停止");
             SetStatus("已停止合并补丁生成");
             return;
         }
         catch (Exception ex)
         {
+            console.Fail("生成失败：" + ex.Message);
             SetStatus($"生成合并补丁失败：{ex.Message}");
             MessageBox.Show(this, ex.Message, "生成合并兼容补丁", MessageBoxButtons.OK, MessageBoxIcon.Warning);
             return;
@@ -2024,6 +2024,7 @@ public sealed class MainForm : Form
             _agentBusy = false;
             _agentCts?.Dispose();
             _agentCts = null;
+            _investigator?.Guidance = null;
             UpdateCommandStates();
         }
 
@@ -2065,6 +2066,175 @@ public sealed class MainForm : Form
 
         if (confirm == DialogResult.Yes)
             InstallPatchCore();
+    }
+
+    private async Task RunLiveVerificationAsync()
+    {
+        if (_liveVerifierRunning || _agentBusy || _busy)
+            return;
+
+        if (_lastResult == null)
+        {
+            SetStatus("尚未分析，无法实机验证");
+            return;
+        }
+
+        var conflicts = GetAgentScopeConflicts();
+        if (conflicts.Count == 0)
+        {
+            SetStatus("当前没有需要实机验证的生效冲突");
+            return;
+        }
+
+        EnsureInvestigator();
+        if (_investigator?.UsesModel != true)
+        {
+            MessageBox.Show(
+                this,
+                "实机验证由 Agent 全权操作游戏取证，需要配置模型接口。\n\n当前未配置模型，Agent 无法驱动实机核验。",
+                "实机验证",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        var gabsPath = AgentGabsTools.ResolveGabsExePath();
+        if (!File.Exists(gabsPath))
+        {
+            MessageBox.Show(
+                this,
+                $"未找到 GABS：\n{gabsPath}\n\n实机验证需要 GABS 启动 RimWorld 并连接 RimBridgeServer 桥接。",
+                "实机验证",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Information);
+            return;
+        }
+
+        var bridgeDir = BridgeModLocator.FindBridgeModDirectory();
+        if (bridgeDir == null)
+        {
+            MessageBox.Show(
+                this,
+                $"未找到 {BridgeModLocator.BridgeModName} 模组，实机桥接无法建立。\n\n" +
+                $"请把它放到 RimWorld 的 Mods 目录：\n{ModListResolver.PathOptions.RimWorldInstallDir}\\Mods",
+                "实机验证不可用",
+                MessageBoxButtons.OK,
+                MessageBoxIcon.Warning);
+            SetStatus("实机验证不可用：未找到桥接模组");
+            return;
+        }
+
+        var confirm = MessageBox.Show(
+            this,
+            "Agent 将在授权范围内全权操作：启动 RimWorld、读取实机日志、推进时间、" +
+            "必要时新建测试殖民地，然后自己判断每条冲突是否在实机复现。\n\n" +
+            "RimBridgeServer 仅在本次验证期间临时启用，结束后会移出加载列表。\n" +
+            "Agent 不会写入你的存档，也不会删除模组。\n\n" +
+            $"待核验冲突：{conflicts.Count} 项。\n\n是否继续？",
+            "实机验证",
+            MessageBoxButtons.YesNo,
+            MessageBoxIcon.Question,
+            MessageBoxDefaultButton.Button2);
+        if (confirm != DialogResult.Yes)
+            return;
+
+        _liveVerifierRunning = true;
+        _agentCts?.Dispose();
+        _agentCts = new CancellationTokenSource();
+        UpdateCommandStates();
+
+        var reports = new List<AgentReport>();
+
+        // 实机验证期间同样由 Agent 窗口接管，关闭时自行释放。
+        // 玩家在窗口里投递的要求写进通道，会带进之后每一次模型调用。
+        var guidance = new AgentGuidanceChannel();
+        var console = new AgentConsoleForm("Agent · 实机验证");
+        console.CancelRequested += (_, _) => _agentCts?.Cancel();
+        console.MessageSent += (_, text) => guidance.Post(text);
+
+        try
+        {
+            _investigator!.EnableLiveTools(true);
+            _investigator.LiveSink = console;
+            _investigator.Guidance = guidance;
+
+            var progress = new Progress<(int Done, int Total, string Label)>(p =>
+            {
+                SetStatus($"[{p.Done}/{p.Total}] {p.Label}");
+            });
+
+            var verifyTask = _investigator.InvestigateAllAsync(
+                conflicts,
+                progress,
+                _agentCts.Token,
+                useModel: true,
+                onReport: report =>
+                {
+                    reports.Add(report);
+                    _agentReports[report.ConflictKey] = report;
+                },
+                liveTitle: "Agent · 实机验证");
+
+            console.TakeOver(this);
+            var result = await verifyTask;
+
+            UpdateDetailForMod();
+            ShowLiveVerificationResult(result);
+            SetStatus($"实机核验完成：{result.Count} 项，其中确认冲突 {result.Count(r => r.Verdict == AgentVerdictKind.RealConflict)} 项");
+        }
+        catch (OperationCanceledException)
+        {
+            console.Fail("已停止");
+            SetStatus("已停止实机验证");
+        }
+        catch (Exception ex)
+        {
+            console.Fail("实机验证失败：" + ex.Message);
+            SetStatus($"实机验证失败：{ex.Message}");
+            MessageBox.Show(this, ex.Message, "实机验证", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+        }
+        finally
+        {
+            try { _investigator?.EnableLiveTools(false); } catch { /* 收尾失败不影响结论 */ }
+            if (_investigator != null)
+            {
+                _investigator.LiveSink = null;
+                _investigator.Guidance = null;
+            }
+            _liveVerifierRunning = false;
+            _agentCts?.Dispose();
+            _agentCts = null;
+            UpdateCommandStates();
+        }
+    }
+
+    private void ShowLiveVerificationResult(IReadOnlyList<AgentReport> reports)
+    {
+        var text = new System.Text.StringBuilder();
+        text.AppendLine($"实机核验完成：{reports.Count} 项");
+        text.AppendLine();
+
+        var real = reports.Count(r => r.Verdict == AgentVerdictKind.RealConflict);
+        var conditional = reports.Count(r => r.Verdict == AgentVerdictKind.ConditionDependent);
+        var falsePositive = reports.Count(r => r.Verdict == AgentVerdictKind.FalsePositive);
+        var insufficient = reports.Count(r => r.Verdict == AgentVerdictKind.InsufficientEvidence);
+
+        text.AppendLine($"确认冲突 {real} · 条件性 {conditional} · 静态误报 {falsePositive} · 证据不足 {insufficient}");
+        text.AppendLine();
+
+        foreach (var report in reports.Take(20))
+        {
+            text.AppendLine($"· {report.ConflictKey}");
+            text.AppendLine($"  {report.VerdictLabel}（置信度 {report.Confidence:P0}）");
+            text.AppendLine($"  {report.Headline}");
+            text.AppendLine();
+        }
+
+        if (reports.Count > 20)
+            text.AppendLine($"（其余 {reports.Count - 20} 项略，结论已写入冲突详情）");
+
+        MessageBox.Show(this, text.ToString(), "实机验证结果", MessageBoxButtons.OK,
+            real > 0 ? MessageBoxIcon.Warning : MessageBoxIcon.Information);
     }
 
     private void InstallPatchCore()
@@ -2157,7 +2327,9 @@ public sealed class MainForm : Form
                     Accent: conflict.Grade,
                     Items: items));
 
-                blocks.Add(BuildAgentBlock(conflict));
+                var agentBlock = BuildAgentBlock(conflict);
+                if (agentBlock != null)
+                    blocks.Add(agentBlock);
 
                 var patchBlock = BuildPatchBlock(conflict);
                 if (patchBlock != null)
@@ -2187,7 +2359,7 @@ public sealed class MainForm : Form
     }
 
     /// <summary>Agent 结论块：先说结论，再给玩家看得懂的隐患；技术证据留在 Badge 与「技术细节」里。</summary>
-    private DetailBlock BuildAgentBlock(PlayerConflict conflict)
+    private DetailBlock? BuildAgentBlock(PlayerConflict conflict)
     {
         if (_agentReports.TryGetValue(conflict.Key, out var report))
         {
@@ -2222,23 +2394,7 @@ public sealed class MainForm : Form
             return new DetailBlock("Agent 代码核查", items, report.VerdictLabel, accent);
         }
 
-        if (_checkingKeys.Contains(conflict.Key))
-        {
-            return new DetailBlock(
-                "Agent 代码核查",
-                new[] { new DetailItem(string.Empty, "正在反编译双方补丁、读取目标方法并比对修改逻辑…", DetailValueKind.Bullet) },
-                "核查中");
-        }
-
-        return new DetailBlock(
-            "Agent 代码核查",
-            new[]
-            {
-                new DetailItem(string.Empty,
-                    _investigator == null ? "Agent 尚未就绪。" : "该冲突尚未核查，选中模组后会自动开始。",
-                    DetailValueKind.Bullet)
-            },
-            "待核查");
+        return null;
     }
 
     private DetailBlock? BuildPatchBlock(PlayerConflict conflict)
@@ -2435,8 +2591,13 @@ public sealed class MainForm : Form
             return;
 
         var activeIds = GetEffectiveActivePackageIds();
-        if (activeIds.Count == 0)
+        if (activeIds.Count == 0 || !SortOrderValidator.ValidateActiveModSet(activeIds, _lastResult).IsValid)
+        {
+            if (string.Equals(_profileStore.ActiveProfileName, autoSaveName, StringComparison.OrdinalIgnoreCase))
+                _profileStore.SetActive(null);
+            RefreshSortListsButton();
             return;
+        }
 
         var profile = new SortListProfile(
             autoSaveName,
@@ -2461,6 +2622,18 @@ public sealed class MainForm : Form
             return;
         }
 
+        var effectiveIds = GetEffectiveActivePackageIds();
+
+        var validation = SortOrderValidator.ValidateActiveModSet(effectiveIds, _lastResult);
+
+        if (!validation.IsValid)
+        {
+            SetStatus("最终启用集合校验未通过，已阻止写入游戏配置");
+            var ex = new SortValidationException("最终启用集合校验失败，已阻止写入游戏配置", validation);
+            ShowFriendlyError("写入游戏配置校验未通过", ex);
+            return;
+        }
+
         var target = ModListResolver.DefaultModsConfigPath;
         var redCount = _lastResult.Report.RedModCount;
         var warning = redCount > 0
@@ -2480,7 +2653,6 @@ public sealed class MainForm : Form
                        "不会写入 ModsConfig.xml（避免意外激活数百个模组）。";
         }
 
-        var effectiveIds = GetEffectiveActivePackageIds();
         var excludedCount = _lastResult.Report.SortedMods.Count(m => m.IsActive) - effectiveIds.Count;
         if (excludedCount > 0)
         {
@@ -2511,6 +2683,10 @@ public sealed class MainForm : Form
 
         try
         {
+            var currentValidation = ProfileValidationService.ValidatePackageIds(effectiveIds, _lastResult.EffectiveGameVersion);
+            if (!currentValidation.IsValid)
+                throw new SortValidationException(currentValidation.Result);
+
             var backup = ModSortReportBuilder.ApplyPackageIdsWithBackup(
                 target,
                 _lastResult.EffectiveGameVersion,
@@ -2535,6 +2711,18 @@ public sealed class MainForm : Form
             return;
         }
 
+        var effectiveIds = GetEffectiveActivePackageIds();
+
+        var validation = SortOrderValidator.ValidateActiveModSet(effectiveIds, _lastResult);
+
+        if (!validation.IsValid)
+        {
+            SetStatus("最终启用集合校验未通过，已阻止导出");
+            var ex = new SortValidationException("最终启用集合校验失败，已阻止导出 ModsConfig.xml", validation);
+            ShowFriendlyError("导出 ModsConfig.xml 校验未通过", ex);
+            return;
+        }
+
         using var dialog = new SaveFileDialog
         {
             Title = "导出 ModsConfig.xml",
@@ -2547,10 +2735,14 @@ public sealed class MainForm : Form
 
         try
         {
-            ModSortReportBuilder.ExportPackageIdsAsModsConfigXml(
+            var currentValidation = ProfileValidationService.ValidatePackageIds(effectiveIds, _lastResult.EffectiveGameVersion);
+            if (!currentValidation.IsValid)
+                throw new SortValidationException(currentValidation.Result);
+
+            ModSortReportBuilder.ApplyPackageIdsWithBackup(
                 dialog.FileName,
                 _lastResult.EffectiveGameVersion,
-                GetEffectiveActivePackageIds(),
+                effectiveIds,
                 _lastResult.KnownExpansions);
 
             SetStatus($"已导出 ModsConfig.xml：{dialog.FileName}");
@@ -2630,27 +2822,36 @@ public sealed class MainForm : Form
 
     // ───────────────────────────── 辅助 ─────────────────────────────
 
+    /// <summary>
+    /// 按键明暗按数据就绪程度分级：未导入时只留导入；
+    /// 列表在手才开分析；出结果后才开三个 Agent 键与导出/写入。
+    /// </summary>
     private void UpdateCommandStates()
     {
-        var hasResult = _lastResult != null;
-        var hasTokens = _tokens.Count > 0;
+        var idle = !_busy && !_agentBusy;
+        var hasLibrary = _tokens.Count > 0;    // 已导入：列表在手
+        var hasResult = _lastResult != null;   // 已分析：结论在手
 
-        _btnAnalyze.Enabled = !_busy && !_agentBusy && hasTokens;
+        _btnImport.Enabled = idle;
+        _btnAnalyze.Enabled = idle && hasLibrary;
         _btnStop.Enabled = _busy || _agentBusy;
-        _btnImport.Enabled = !_busy && !_agentBusy;
-        _btnApply.Enabled = hasResult && !_busy;
-        _btnExport.Enabled = hasResult && !_busy;
         _btnLaunchGame.Enabled = !_busy;
         _btnSortLists.Enabled = !_busy;
 
         _btnAnalyze.Text = _busy ? "分析进行中…" : "开始分析";
 
-        var hasAgentTargets = GetAgentScopeConflicts().Count > 0;
+        // 三个 Agent 键与导出/写入都只在分析出结果之后亮起
+        var hasAgentTargets = hasResult && GetAgentScopeConflicts().Count > 0;
         var hasPackage = _patchBundle is { Success: true, IsModPackage: true };
 
-        _btnDeepCheck.Enabled = !_busy && !_agentBusy && hasAgentTargets;
-        _btnBuildPatch.Enabled = !_busy && !_agentBusy && hasAgentTargets;
+        _btnDeepCheck.Enabled = idle && hasAgentTargets;
+        _btnBuildPatch.Enabled = idle && hasAgentTargets;
         _btnBuildPatch.Text = hasPackage ? "重新兼容生成" : "兼容生成";
+        _btnLiveVerify.Enabled = idle && hasAgentTargets && !_liveVerifierRunning;
+        _btnLiveVerify.Text = _liveVerifierRunning ? "实机验证中…" : "实机验证";
+
+        _btnExport.Enabled = idle && hasResult;
+        _btnApply.Enabled = idle && hasResult;
 
         _btnMaximize.IsMaximized = WindowState == FormWindowState.Maximized;
         _btnMaximize.Invalidate();

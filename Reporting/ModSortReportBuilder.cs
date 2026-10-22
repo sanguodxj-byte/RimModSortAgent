@@ -23,7 +23,8 @@ public static class ModSortReportBuilder
         long analysisDurationMs = 0,
         IReadOnlyDictionary<string, TopologicalModSorter.ModTierInfo>? tierByPackageId = null,
         IReadOnlyList<string>? unresolvedTokens = null,
-        WorkshopScanResult? workshopScan = null)
+        WorkshopScanResult? workshopScan = null,
+        IReadOnlyList<string>? runtimePatchNotes = null)
     {
         var nameById = sortedMods
             .GroupBy(m => m.PackageId, StringComparer.OrdinalIgnoreCase)
@@ -166,7 +167,8 @@ public static class ModSortReportBuilder
             WorkshopPoolModCount = summaries.Count(m => !m.IsActive),
             WorkshopMissingOnDiskCount = workshopScan?.SubscribedButNotInstalled.Count ?? 0,
             WorkshopManifestPath = workshopScan?.ManifestPath,
-            WorkshopWarnings = workshopScan?.Warnings ?? Array.Empty<string>()
+            WorkshopWarnings = workshopScan?.Warnings ?? Array.Empty<string>(),
+            RuntimePatchNotes = runtimePatchNotes ?? Array.Empty<string>()
         };
     }
 
@@ -333,6 +335,10 @@ public static class ModSortReportBuilder
             if (report.GabsVerification.GameRunning)
                 sb.AppendLine("- 写入提示: 游戏正在运行，退出时会用内存列表回写 ModsConfig.xml，建议先退出游戏再写入");
         }
+
+        foreach (var note in report.RuntimePatchNotes)
+            sb.AppendLine($"- 运行期补丁链: {note}");
+
         sb.AppendLine();
 
         AppendTierDistribution(sb, report);
@@ -518,12 +524,23 @@ public static class ModSortReportBuilder
         WriteModsConfigXml(outputPath, gameVersion, packageIds, knownExpansions);
     }
 
+    internal static Action<string>? OnBeforeTempFileVerifyForTesting { get; set; }
+    internal static Action<string>? OnBeforeFinalVerifyForTesting { get; set; }
+    internal static Action<string, string>? OnBeforeRollbackForTesting { get; set; }
+
     private static void WriteModsConfigXml(
         string outputPath,
         string gameVersion,
         IEnumerable<string> packageIds,
         IReadOnlyList<string> knownExpansions)
     {
+        var expectedActiveMods = packageIds.ToList();
+        if (expectedActiveMods.Any(string.IsNullOrWhiteSpace))
+            throw new InvalidOperationException("ModsConfig.xml 启用列表包含空模组标识。");
+        expectedActiveMods = expectedActiveMods.Select(id => id.Trim().ToLowerInvariant()).ToList();
+        if (expectedActiveMods.Select(ModListResolver.StripSteamSuffix).Distinct(StringComparer.OrdinalIgnoreCase).Count() != expectedActiveMods.Count)
+            throw new InvalidOperationException("ModsConfig.xml 启用列表包含重复模组标识。");
+
         var expansions = knownExpansions.Count > 0
             ? knownExpansions
             : new[]
@@ -541,15 +558,138 @@ public static class ModSortReportBuilder
             new XElement("ModsConfigData",
                 new XElement("version", gameVersion),
                 new XElement("activeMods",
-                    packageIds.Select(id => new XElement("li", id.ToLowerInvariant()))),
+                    expectedActiveMods.Select(id => new XElement("li", id))),
                 new XElement("knownExpansions",
                     expansions.Select(e => new XElement("li", e.ToLowerInvariant())))));
 
-        var dir = Path.GetDirectoryName(outputPath);
+        var fullOutputPath = Path.GetFullPath(outputPath);
+        var dir = Path.GetDirectoryName(fullOutputPath);
         if (!string.IsNullOrWhiteSpace(dir))
             Directory.CreateDirectory(dir);
+        else
+            dir = ".";
 
-        doc.Save(outputPath);
+        var fileName = Path.GetFileName(fullOutputPath);
+        var tempPath = Path.Combine(dir, $"{fileName}.tmp.{Guid.NewGuid():N}");
+        var rollbackPath = Path.Combine(dir, $"{fileName}.rollback.{Guid.NewGuid():N}");
+        var targetExisted = File.Exists(fullOutputPath);
+        var completedSuccessfully = false;
+        var rollbackRestored = false;
+        var installed = false;
+
+        try
+        {
+            doc.Save(tempPath);
+
+            OnBeforeTempFileVerifyForTesting?.Invoke(tempPath);
+
+            if (!ConfigMatches(tempPath, gameVersion, expectedActiveMods, expansions))
+            {
+                throw new IOException("ModsConfig.xml 临时文件校验失败：activeMods 顺序或内容与预期不符。");
+            }
+
+            if (targetExisted)
+            {
+                File.Replace(tempPath, fullOutputPath, rollbackPath);
+            }
+            else
+            {
+                File.Move(tempPath, fullOutputPath);
+            }
+            installed = true;
+
+            OnBeforeFinalVerifyForTesting?.Invoke(fullOutputPath);
+
+            if (!ConfigMatches(fullOutputPath, gameVersion, expectedActiveMods, expansions))
+            {
+                throw new IOException("ModsConfig.xml 目标文件写入后校验失败：activeMods 顺序或内容与预期不符。");
+            }
+
+            completedSuccessfully = true;
+        }
+        catch (Exception ex)
+        {
+            if (targetExisted && installed && File.Exists(rollbackPath) && !completedSuccessfully)
+            {
+                Exception? rollbackError = null;
+                try
+                {
+                    OnBeforeRollbackForTesting?.Invoke(rollbackPath, fullOutputPath);
+
+                    var originalBytes = File.ReadAllBytes(rollbackPath);
+                    File.Copy(rollbackPath, tempPath);
+                    if (File.Exists(fullOutputPath))
+                        File.Replace(tempPath, fullOutputPath, null);
+                    else
+                        File.Move(tempPath, fullOutputPath);
+
+                    rollbackRestored = File.ReadAllBytes(fullOutputPath).SequenceEqual(originalBytes);
+                }
+                catch (Exception rbEx)
+                {
+                    rollbackError = rbEx;
+                }
+
+                if (rollbackRestored)
+                {
+                    TryDeleteFile(rollbackPath);
+                }
+                else
+                {
+                    var detail = rollbackError != null ? $"（回滚失败原因：{rollbackError.Message}）" : string.Empty;
+                    throw new IOException(
+                        $"ModsConfig.xml 写入或校验失败，且未能自动回滚恢复原目标文件。原始备份已保留在：{rollbackPath}{detail}",
+                        rollbackError ?? ex);
+                }
+            }
+            else if (!targetExisted && installed && !completedSuccessfully && File.Exists(fullOutputPath))
+            {
+                TryDeleteFile(fullOutputPath);
+            }
+
+            throw;
+        }
+        finally
+        {
+            TryDeleteFile(tempPath);
+            if (completedSuccessfully || rollbackRestored)
+            {
+                if (File.Exists(rollbackPath))
+                {
+                    TryDeleteFile(rollbackPath);
+                }
+            }
+        }
+    }
+
+    private static bool ConfigMatches(string path, string version, IReadOnlyList<string> activeMods, IReadOnlyList<string> expansions)
+    {
+        try
+        {
+            if (!TryReadActiveMods(path, out var actualVersion, out var actualMods) ||
+                !string.Equals(actualVersion, version, StringComparison.Ordinal) ||
+                !actualMods.SequenceEqual(activeMods, StringComparer.Ordinal))
+                return false;
+            var actualExpansions = XDocument.Load(path).Root?.Element("knownExpansions")?.Elements("li")
+                .Select(e => e.Value).ToArray();
+            return actualExpansions != null && actualExpansions.SequenceEqual(expansions.Select(e => e.ToLowerInvariant()), StringComparer.Ordinal);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void TryDeleteFile(string path)
+    {
+        try
+        {
+            if (File.Exists(path))
+                File.Delete(path);
+        }
+        catch
+        {
+        }
     }
 
     /// <summary>
@@ -593,9 +733,9 @@ public static class ModSortReportBuilder
             return null;
 
         var dir = Path.GetDirectoryName(targetModsConfigPath) ?? string.Empty;
-        var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        var backupPath = Path.Combine(dir, $"ModsConfig.backup.{stamp}.xml");
-        File.Copy(targetModsConfigPath, backupPath, overwrite: true);
+        var stamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fffffff");
+        var backupPath = Path.Combine(dir, $"ModsConfig.backup.{stamp}.{Guid.NewGuid():N}.xml");
+        File.Copy(targetModsConfigPath, backupPath, overwrite: false);
         return backupPath;
     }
 
@@ -624,13 +764,18 @@ public static class ModSortReportBuilder
             if (root == null || root.Name != "ModsConfigData")
                 return false;
 
-            gameVersion = root.Element("version")?.Value ?? string.Empty;
-            activeMods = root
-                .Element("activeMods")?
-                .Elements("li")
+            var activeElement = root.Element("activeMods");
+            if (activeElement == null || activeElement.Elements().Any(e => e.Name != "li" || e.HasElements))
+                return false;
+
+            var ids = activeElement.Elements("li")
                 .Select(li => li.Value.Trim().ToLowerInvariant())
-                .Where(id => id.Length > 0)
-                .ToList() ?? new List<string>();
+                .ToList();
+            if (ids.Any(string.IsNullOrWhiteSpace))
+                return false;
+
+            gameVersion = root.Element("version")?.Value ?? string.Empty;
+            activeMods = ids;
             return true;
         }
         catch (Exception)
