@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using DecompilerServer.Services;
 using ModSorterAgent.Discovery;
 using ModSorterAgent.Models;
@@ -9,13 +8,11 @@ namespace ModSorterAgent.Analysis;
 /// 负责对模组程序集执行反编译与 Harmony 补丁特征提取。
 /// 设计要点：
 /// 1) 每个 DLL 使用独立的 <see cref="AssemblyContextManager"/>，因此可以安全地并发分析；
-/// 2) 以 (路径, 大小, 最后写入时间) 为指纹做进程内缓存，重复分析同一列表时不再反编译；
+/// 2) 不做任何缓存：每一次排序都把范围内的程序集现场重读一遍，结果只来自本轮磁盘内容；
 /// 3) 过滤 BCL / Unity / Harmony 等框架程序集引用，避免"引用噪声"污染依赖图。
 /// </summary>
 public sealed class CodeConflictAnalyzer
 {
-    private static readonly ConcurrentDictionary<string, Lazy<CachedAssemblyAnalysis?>> AnalysisCache = new(StringComparer.OrdinalIgnoreCase);
-
     private static readonly string[] IgnoredAssemblyPrefixes =
     {
         "System",
@@ -122,6 +119,7 @@ public sealed class CodeConflictAnalyzer
 
         var analyses = new List<AssemblyHarmonyAnalysisResult>(mod.AssemblyPaths.Count);
         var externalRefs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var embeddedSpecs = new List<EmbeddedAssemblySpec>(mod.AssemblyPaths.Count);
 
         foreach (var dllPath in mod.AssemblyPaths)
         {
@@ -130,13 +128,16 @@ public sealed class CodeConflictAnalyzer
             if (!File.Exists(dllPath))
                 continue;
 
-            var cached = GetOrAnalyze(dllPath);
-            if (cached == null)
+            var analyzed = AnalyzeSingleAssembly(dllPath);
+            if (analyzed == null)
                 continue;
 
-            analyses.Add(cached.Result);
-            foreach (var reference in cached.ExternalReferences)
+            analyses.Add(analyzed.Result);
+            foreach (var reference in analyzed.ExternalReferences)
                 externalRefs.Add(reference);
+
+            if (analyzed.EmbeddedSpec != null)
+                embeddedSpecs.Add(analyzed.EmbeddedSpec);
         }
 
         return mod with
@@ -144,39 +145,9 @@ public sealed class CodeConflictAnalyzer
             AssemblyAnalyses = analyses,
             ReferencedExternalAssemblies = externalRefs
                 .OrderBy(x => x, StringComparer.OrdinalIgnoreCase)
-                .ToArray()
+                .ToArray(),
+            EmbeddedAssemblies = embeddedSpecs
         };
-    }
-
-    private CachedAssemblyAnalysis? GetOrAnalyze(string dllPath)
-    {
-        string fingerprint;
-        try
-        {
-            var info = new FileInfo(dllPath);
-            fingerprint = $"{info.FullName}|{info.Length}|{info.LastWriteTimeUtc.Ticks}";
-        }
-        catch
-        {
-            return null;
-        }
-
-        var lazy = AnalysisCache.GetOrAdd(
-            fingerprint,
-            _ => new Lazy<CachedAssemblyAnalysis?>(
-                () => AnalyzeSingleAssembly(dllPath),
-                LazyThreadSafetyMode.ExecutionAndPublication));
-
-        try
-        {
-            return lazy.Value;
-        }
-        catch
-        {
-            // 缓存一个失败结果，避免同一轮分析中反复重试损坏的 DLL
-            AnalysisCache.TryRemove(fingerprint, out _);
-            return null;
-        }
     }
 
     private CachedAssemblyAnalysis? AnalyzeSingleAssembly(string dllPath)
@@ -189,23 +160,91 @@ public sealed class CodeConflictAnalyzer
             var decompiler = new DecompilerService(ctx, resolver);
 
             var references = new List<string>();
+            string asmName = Path.GetFileNameWithoutExtension(dllPath);
+            string asmVersion = "1.0.0.0";
+            var exportedMembers = new List<string>();
+            var externalCalls = new List<string>();
+
             try
             {
                 var metadata = ctx.GetPEFile().Metadata;
+                if (metadata.IsAssembly)
+                {
+                    var def = metadata.GetAssemblyDefinition();
+                    asmName = metadata.GetString(def.Name);
+                    asmVersion = def.Version.ToString();
+                }
+
                 foreach (var handle in metadata.AssemblyReferences)
                 {
                     var name = metadata.GetString(metadata.GetAssemblyReference(handle).Name);
                     if (!string.IsNullOrWhiteSpace(name) && !IsIgnoredAssemblyReference(name))
                         references.Add(name);
                 }
+
+                foreach (var typeHandle in metadata.TypeDefinitions)
+                {
+                    var typeDef = metadata.GetTypeDefinition(typeHandle);
+                    var vis = typeDef.Attributes & System.Reflection.TypeAttributes.VisibilityMask;
+                    if (vis != System.Reflection.TypeAttributes.Public && vis != System.Reflection.TypeAttributes.NestedPublic)
+                        continue;
+
+                    var typeName = metadata.GetString(typeDef.Name);
+                    var typeNs = metadata.GetString(typeDef.Namespace);
+                    var fullTypeName = string.IsNullOrEmpty(typeNs) ? typeName : $"{typeNs}.{typeName}";
+
+                    foreach (var methodHandle in typeDef.GetMethods())
+                    {
+                        var methodDef = metadata.GetMethodDefinition(methodHandle);
+                        var methodAccess = methodDef.Attributes & System.Reflection.MethodAttributes.MemberAccessMask;
+                        if (methodAccess != System.Reflection.MethodAttributes.Public)
+                            continue;
+
+                        var methodName = metadata.GetString(methodDef.Name);
+                        exportedMembers.Add($"{fullTypeName}::{methodName}");
+                    }
+                }
+
+                foreach (var memberRefHandle in metadata.MemberReferences)
+                {
+                    var memberRef = metadata.GetMemberReference(memberRefHandle);
+                    if (memberRef.GetKind() != System.Reflection.Metadata.MemberReferenceKind.Method)
+                        continue;
+
+                    var memberName = metadata.GetString(memberRef.Name);
+                    string? declaringTypeName = null;
+
+                    if (memberRef.Parent.Kind == System.Reflection.Metadata.HandleKind.TypeReference)
+                    {
+                        var typeRef = metadata.GetTypeReference((System.Reflection.Metadata.TypeReferenceHandle)memberRef.Parent);
+                        var typeName = metadata.GetString(typeRef.Name);
+                        var typeNs = metadata.GetString(typeRef.Namespace);
+                        declaringTypeName = string.IsNullOrEmpty(typeNs) ? typeName : $"{typeNs}.{typeName}";
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(declaringTypeName))
+                    {
+                        externalCalls.Add($"{declaringTypeName}::{memberName}");
+                    }
+                }
             }
             catch
             {
-                // 元数据表读取失败时退化为"无外部引用"，不影响 Harmony 补丁分析
+                // 元数据表读取失败时退化为容错模式
             }
 
             var result = HarmonyPatchAnalyzer.AnalyzeAssembly(ctx, resolver, decompiler, includeSnippets: false);
-            return new CachedAssemblyAnalysis(result, references.Distinct(StringComparer.OrdinalIgnoreCase).ToArray());
+            var embeddedSpec = new EmbeddedAssemblySpec(
+                AssemblyName: asmName,
+                AssemblyVersion: asmVersion,
+                FilePath: dllPath,
+                ExportedMemberSignatures: exportedMembers.Distinct(StringComparer.Ordinal).ToArray(),
+                ExternalMethodCalls: externalCalls.Distinct(StringComparer.Ordinal).ToArray());
+
+            return new CachedAssemblyAnalysis(
+                result,
+                references.Distinct(StringComparer.OrdinalIgnoreCase).ToArray(),
+                embeddedSpec);
         }
         catch
         {
@@ -227,5 +266,6 @@ public sealed class CodeConflictAnalyzer
 
     private sealed record CachedAssemblyAnalysis(
         AssemblyHarmonyAnalysisResult Result,
-        IReadOnlyList<string> ExternalReferences);
+        IReadOnlyList<string> ExternalReferences,
+        EmbeddedAssemblySpec? EmbeddedSpec);
 }

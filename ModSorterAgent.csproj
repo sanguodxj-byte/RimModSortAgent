@@ -10,7 +10,7 @@
     <RootNamespace>ModSorterAgent</RootNamespace>
     <CETCompat>false</CETCompat>
 
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Product>RimWorld 模组排序与冲突分析工作台</Product>
     <Authors>sanguodxj-byte</Authors>
     <Copyright>Copyright (c) 2026 sanguodxj-byte</Copyright>

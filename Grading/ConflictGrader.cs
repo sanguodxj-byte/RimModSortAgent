@@ -79,6 +79,8 @@ public static class ConflictGrader
         AnalyzeExplicitDeclarations(mods, index, findings, edges, missingDeps, cancellationToken);
         AnalyzeHarmonyCollisions(mods, index, findings, edges, cancellationToken);
         AnalyzeXmlCollisions(mods, findings, edges, cancellationToken);
+        AnalyzeAssemblyVersionDrift(mods, findings, edges, cancellationToken);
+        AnalyzeDuplicateAssemblyInstalls(mods, findings, cancellationToken);
 
         if (!string.IsNullOrWhiteSpace(playerLogPath))
             AnalyzeXmlDefErrors(mods, playerLogPath!, findings, cancellationToken);
@@ -87,6 +89,70 @@ public static class ConflictGrader
             DeduplicateFindings(findings),
             DeduplicateEdges(edges),
             missingDeps.Distinct(StringComparer.OrdinalIgnoreCase).ToList());
+    }
+
+    // ───────────────────── 三·五、同一程序集重复安装 ─────────────────────
+    // 判据：不同模组各自带了一份 MVID 相同的程序集，且该程序集里含 Harmony 补丁。
+    // MVID 相同 = 同一份编译产物；两份都在，同一套补丁就会挂两遍（按钮画两次、事件触发两次）。
+    // 只统计含补丁的程序集：0PrepatcherAPI 这类前置注入库本来就被多个模组共用，不算重复安装。
+
+    private static void AnalyzeDuplicateAssemblyInstalls(
+        IReadOnlyList<ModDescriptor> mods,
+        List<PairwiseConflictFinding> findings,
+        CancellationToken cancellationToken)
+    {
+        var ownersByMvid = new Dictionary<string, List<(ModDescriptor Mod, AssemblyHarmonyAnalysisResult Asm)>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var mod in mods)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            foreach (var asm in mod.AssemblyAnalyses)
+            {
+                if (asm.Patches.Count == 0 || string.IsNullOrWhiteSpace(asm.Mvid))
+                    continue;
+
+                if (!ownersByMvid.TryGetValue(asm.Mvid, out var owners))
+                {
+                    owners = new List<(ModDescriptor, AssemblyHarmonyAnalysisResult)>();
+                    ownersByMvid[asm.Mvid] = owners;
+                }
+
+                if (!owners.Any(o => string.Equals(o.Mod.PackageId, mod.PackageId, StringComparison.OrdinalIgnoreCase)))
+                    owners.Add((mod, asm));
+            }
+        }
+
+        foreach (var group in ownersByMvid.Values)
+        {
+            if (group.Count < 2)
+                continue;
+
+            var asmFileName = Path.GetFileName(group[0].Asm.AssemblyPath);
+            var evidence = group
+                .Select(o => $"{o.Mod.Name}: {asmFileName}（{o.Asm.Patches.Count} 个补丁，MVID={o.Asm.Mvid}）")
+                .ToArray();
+
+            for (var i = 0; i < group.Count; i++)
+            {
+                for (var j = i + 1; j < group.Count; j++)
+                {
+                    findings.Add(new PairwiseConflictFinding(
+                        ModAPackageId: group[i].Mod.PackageId,
+                        ModAName: group[i].Mod.Name,
+                        ModBPackageId: group[j].Mod.PackageId,
+                        ModBName: group[j].Mod.Name,
+                        Grade: ConflictGrade.Purple,
+                        Category: "DuplicateAssemblyInstall",
+                        TargetSignature: asmFileName,
+                        Summary: $"{group[i].Mod.Name} 与 {group[j].Mod.Name} 各自带了一份相同的 {asmFileName}，同一套 {group[i].Asm.Patches.Count} 个补丁会被挂两遍",
+                        Evidence: evidence,
+                        RecommendedBeforePackageId: null,
+                        RecommendedAfterPackageId: null,
+                        RecommendationReason: "这是同一个模组装了两份：停用其中一份，或删掉重复目录里的程序集"));
+                }
+            }
+        }
     }
 
     // ───────────────────── 四、游戏日志里的 Def 错误 ─────────────────────
@@ -127,12 +193,7 @@ public static class ConflictGrader
         }
     }
 
-    private static ConflictGrade GradeXmlDefIssue(XmlDefIssueKind kind) => kind switch
-    {
-        XmlDefIssueKind.TypeMismatch => ConflictGrade.Red,
-        XmlDefIssueKind.NotDefined => ConflictGrade.Red,
-        _ => ConflictGrade.Yellow
-    };
+    private static ConflictGrade GradeXmlDefIssue(XmlDefIssueKind kind) => ConflictGrade.Yellow;
 
     private static string SummarizeXmlDefIssue(XmlDefReferenceIssue issue, bool hasOtherDefiner)
     {
@@ -246,13 +307,16 @@ public static class ConflictGrader
                         ? dep.PackageId
                         : $"{dep.DisplayName} ({dep.PackageId})";
 
+                    var isCoreBaseMissing = dep.PackageId.Equals("brrainz.harmony", StringComparison.OrdinalIgnoreCase) ||
+                                            dep.PackageId.Equals("ludeon.rimworld", StringComparison.OrdinalIgnoreCase);
+
                     missingDeps.Add($"模组 {mod.Name} ({mod.PackageId}) 缺少必需前置依赖: {label}");
                     findings.Add(new PairwiseConflictFinding(
                         ModAPackageId: mod.PackageId,
                         ModAName: mod.Name,
                         ModBPackageId: dep.PackageId,
                         ModBName: dep.DisplayName ?? dep.PackageId,
-                        Grade: ConflictGrade.Red,
+                        Grade: isCoreBaseMissing ? ConflictGrade.Red : ConflictGrade.Yellow,
                         Category: "MissingDependency",
                         TargetSignature: dep.PackageId,
                         Summary: $"缺少必需前置模组 {label}",
@@ -604,7 +668,7 @@ public static class ConflictGrader
                 ModAName: modA.Name,
                 ModBPackageId: modB.PackageId,
                 ModBName: modB.Name,
-                Grade: ConflictGrade.Red,
+                Grade: ConflictGrade.Yellow,
                 Category: "HarmonyBlockingPrefixConflict",
                 TargetSignature: targetKey,
                 Summary: $"{afterMod.Name} 在 {targetKey} 上无条件返回 false 跳过原方法，会使 {beforeMod.Name} 针对原方法体的补丁无法生效",
@@ -666,7 +730,7 @@ public static class ConflictGrader
                 Grade: ConflictGrade.Yellow,
                 Category: "MultipleTranspilersSameTarget",
                 TargetSignature: targetKey,
-                Summary: $"{modA.Name} 与 {modB.Name} 同时对 {targetKey} 挂载了 Transpiler，静态分析无法排除 IL 锚点相互影响",
+                Summary: $"{modA.Name} 与 {modB.Name} 都在 {targetKey} 处改写代码；多数情况能共存，若其中一方效果没出现，先查这里",
                 Evidence: evidence,
                 RecommendedBeforePackageId: recBefore.PackageId,
                 RecommendedAfterPackageId: recAfter.PackageId,
@@ -1347,5 +1411,164 @@ public static class ConflictGrader
             .OrderByDescending(f => f.Grade)
             .ThenBy(f => f.Category, StringComparer.Ordinal)
             .ToList();
+    }
+
+    // ───────────────────────────── 五、同名嵌入依赖库版本漂移与断裂分析 ─────────────────────────────
+
+    private static void AnalyzeAssemblyVersionDrift(
+        IReadOnlyList<ModDescriptor> mods,
+        List<PairwiseConflictFinding> findings,
+        List<OrderingEdge> edges,
+        CancellationToken cancellationToken)
+    {
+        var assembliesByName = new Dictionary<string, List<(ModDescriptor Mod, EmbeddedAssemblySpec Spec)>>(StringComparer.OrdinalIgnoreCase);
+
+        foreach (var mod in mods)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (mod.IsOfficialCoreOrDlc)
+                continue;
+
+            foreach (var spec in mod.EmbeddedAssemblies)
+            {
+                if (IsIgnoredDriftAssembly(spec.AssemblyName))
+                    continue;
+
+                if (!assembliesByName.TryGetValue(spec.AssemblyName, out var list))
+                {
+                    list = new List<(ModDescriptor, EmbeddedAssemblySpec)>();
+                    assembliesByName[spec.AssemblyName] = list;
+                }
+                list.Add((mod, spec));
+            }
+        }
+
+        foreach (var (asmName, entries) in assembliesByName)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+
+            var distinctModEntries = entries
+                .GroupBy(e => e.Mod.PackageId, StringComparer.OrdinalIgnoreCase)
+                .Select(g => g.First())
+                .ToList();
+
+            if (distinctModEntries.Count < 2)
+                continue;
+
+            for (var i = 0; i < distinctModEntries.Count; i++)
+            {
+                for (var j = i + 1; j < distinctModEntries.Count; j++)
+                {
+                    var (modA, specA) = distinctModEntries[i];
+                    var (modB, specB) = distinctModEntries[j];
+
+                    if (IsSelf(modA, modB))
+                        continue;
+
+                    Version.TryParse(specA.AssemblyVersion, out var vA);
+                    Version.TryParse(specB.AssemblyVersion, out var vB);
+                    vA ??= new Version(1, 0, 0, 0);
+                    vB ??= new Version(1, 0, 0, 0);
+
+                    if (vA == vB && specA.ExportedMemberSignatures.Count == specB.ExportedMemberSignatures.Count)
+                        continue;
+
+                    var older = vA <= vB ? (Mod: modA, Spec: specA, Ver: vA) : (Mod: modB, Spec: specB, Ver: vB);
+                    var newer = vA <= vB ? (Mod: modB, Spec: specB, Ver: vB) : (Mod: modA, Spec: specA, Ver: vA);
+
+                    var newerExports = new HashSet<string>(newer.Spec.ExportedMemberSignatures, StringComparer.Ordinal);
+                    var olderExports = new HashSet<string>(older.Spec.ExportedMemberSignatures, StringComparer.Ordinal);
+
+                    var olderCalls = older.Mod.EmbeddedAssemblies
+                        .SelectMany(s => s.ExternalMethodCalls)
+                        .Where(call => olderExports.Contains(call))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList();
+
+                    var missingInNewer = olderCalls.Where(call => !newerExports.Contains(call)).ToList();
+
+                    var newerCalls = newer.Mod.EmbeddedAssemblies
+                        .SelectMany(s => s.ExternalMethodCalls)
+                        .Where(call => newerExports.Contains(call))
+                        .Distinct(StringComparer.Ordinal)
+                        .ToList();
+
+                    var missingInOlder = newerCalls.Where(call => !olderExports.Contains(call)).ToList();
+
+                    if (missingInNewer.Count > 0)
+                    {
+                        var evidenceList = new List<string>
+                        {
+                            $"共享依赖库: {asmName}.dll",
+                            $"{older.Mod.Name} 携带旧版 (v{older.Ver})，路径: {Path.GetFileName(older.Spec.FilePath)}",
+                            $"{newer.Mod.Name} 携带新版 (v{newer.Ver})，路径: {Path.GetFileName(newer.Spec.FilePath)}",
+                            $"新版中已缺失的调用方法 ({missingInNewer.Count} 项):"
+                        };
+                        evidenceList.AddRange(missingInNewer.Take(4).Select(m => $"  × {m}"));
+
+                        findings.Add(new PairwiseConflictFinding(
+                            ModAPackageId: older.Mod.PackageId,
+                            ModAName: older.Mod.Name,
+                            ModBPackageId: newer.Mod.PackageId,
+                            ModBName: newer.Mod.Name,
+                            Grade: ConflictGrade.Red,
+                            Category: "AssemblyDependencyDriftBreaking",
+                            TargetSignature: $"{asmName} -> {missingInNewer[0]}",
+                            Summary: $"{older.Mod.Name} 依赖的旧版 {asmName}.dll 与 {newer.Mod.Name} 携带的新版存在方法签名断裂，调用缺失方法将抛出 MissingMethodException 导致游戏崩溃或 UI 白屏",
+                            Evidence: evidenceList,
+                            RecommendedBeforePackageId: null,
+                            RecommendedAfterPackageId: null,
+                            RecommendationReason: "新旧依赖库方法签名发生破坏性断裂，无法仅通过加载顺序调和，建议联系作者更新或移除冲突项"));
+                    }
+                    else if (missingInOlder.Count > 0)
+                    {
+                        edges.Add(new OrderingEdge(
+                            BeforePackageId: newer.Mod.PackageId,
+                            AfterPackageId: older.Mod.PackageId,
+                            IsHardConstraint: true,
+                            Weight: 88,
+                            SourceKind: "AssemblyDependencyDriftAutoHeal",
+                            Reason: $"优先加载携带新版 {asmName} (v{newer.Ver}) 的 {newer.Mod.Name}，防止旧版覆盖引发 MissingMethodException 崩溃"));
+
+                        var evidenceList = new List<string>
+                        {
+                            $"共享依赖库: {asmName}.dll",
+                            $"{newer.Mod.Name} 携带新版 (v{newer.Ver}) 包含旧版全部方法，且有自身专有新方法",
+                            $"{older.Mod.Name} 携带旧版 (v{older.Ver})",
+                            $"已建立优先排序约束: {newer.Mod.Name} 必须排在 {older.Mod.Name} 之前"
+                        };
+
+                        findings.Add(new PairwiseConflictFinding(
+                            ModAPackageId: newer.Mod.PackageId,
+                            ModAName: newer.Mod.Name,
+                            ModBPackageId: older.Mod.PackageId,
+                            ModBName: older.Mod.Name,
+                            Grade: ConflictGrade.Green,
+                            Category: "AssemblyDependencyDriftAutoHealed",
+                            TargetSignature: $"{asmName} (v{newer.Ver} vs v{older.Ver})",
+                            Summary: $"已自动优化加载顺序：优先加载 {newer.Mod.Name} 的新版 {asmName}.dll，消除旧版覆盖导致的 MissingMethodException 崩溃隐患",
+                            Evidence: evidenceList,
+                            RecommendedBeforePackageId: newer.Mod.PackageId,
+                            RecommendedAfterPackageId: older.Mod.PackageId,
+                            RecommendationReason: "新版库完全向后兼容旧版接口，优先加载新版库可同时满足双方调用需求"));
+                    }
+                }
+            }
+        }
+    }
+
+    private static bool IsIgnoredDriftAssembly(string name)
+    {
+        if (string.IsNullOrWhiteSpace(name)) return true;
+        if (name.StartsWith("System", StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.StartsWith("Microsoft", StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.StartsWith("UnityEngine", StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.StartsWith("Unity.", StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.StartsWith("Mono.", StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.Equals("0Harmony", StringComparison.OrdinalIgnoreCase) || name.Equals("HarmonyLib", StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.Equals("Assembly-CSharp", StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.Equals("mscorlib", StringComparison.OrdinalIgnoreCase)) return true;
+        if (name.Equals("netstandard", StringComparison.OrdinalIgnoreCase)) return true;
+        return false;
     }
 }

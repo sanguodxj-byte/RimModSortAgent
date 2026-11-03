@@ -95,6 +95,13 @@ public sealed record XmlPatchRecord(
     IReadOnlyList<string> ReferencedModNamesOrIds,
     string SourceFile);
 
+public sealed record EmbeddedAssemblySpec(
+    string AssemblyName,
+    string AssemblyVersion,
+    string FilePath,
+    IReadOnlyList<string> ExportedMemberSignatures,
+    IReadOnlyList<string> ExternalMethodCalls);
+
 public sealed record ModDescriptor
 {
     public required string PackageId { get; init; }
@@ -125,6 +132,7 @@ public sealed record ModDescriptor
     public IReadOnlyList<XmlPatchRecord> XmlPatches { get; init; } = Array.Empty<XmlPatchRecord>();
     public IReadOnlyList<AssemblyHarmonyAnalysisResult> AssemblyAnalyses { get; init; } = Array.Empty<AssemblyHarmonyAnalysisResult>();
     public IReadOnlyList<string> ReferencedExternalAssemblies { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<EmbeddedAssemblySpec> EmbeddedAssemblies { get; init; } = Array.Empty<EmbeddedAssemblySpec>();
 }
 
 public sealed record OrderingEdge(

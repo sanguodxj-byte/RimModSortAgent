@@ -61,6 +61,24 @@ public sealed class ModListResolver
             Store.Save(settings);
             Reload();
         }
+
+        /// <summary>
+        /// 进程内纠偏（RimWorld 模组运行时用）：游戏进程自己就握有安装目录与工坊目录，
+        /// 采信调用方传来的值并覆盖自动检测结果。只改本进程静态属性，不写盘、不改 AppSettings.json。
+        /// </summary>
+        public static void ApplyRuntimePaths(string? installDir, string? workshopDir)
+        {
+            if (!string.IsNullOrWhiteSpace(installDir) &&
+                Directory.Exists(Path.Combine(installDir!, "Data")))
+            {
+                RimWorldInstallDir = installDir!;
+            }
+
+            if (!string.IsNullOrWhiteSpace(workshopDir) && Directory.Exists(workshopDir!))
+            {
+                WorkshopDir = workshopDir!;
+            }
+        }
     }
 
     public static string DefaultModsConfigPath => ResolveDefaultModsConfigPath();
@@ -224,8 +242,20 @@ public sealed class ModListResolver
         IReadOnlyList<string> requestedTokens,
         string gameVersion = "1.7")
     {
+        var (resolved, details) = ResolveModListDetailed(requestedTokens, gameVersion);
+        return (resolved, details.Select(d => d.Token).ToList());
+    }
+
+    /// <summary>
+    /// 同 <see cref="ResolveModList"/>，但把每一条没解析成的 token 连同原因一起返回，
+    /// 供调用方登记成错误清单（排查用），而不是静默丢掉。
+    /// </summary>
+    public (List<ModDescriptor> ResolvedMods, List<UnresolvedModToken> UnresolvedDetails) ResolveModListDetailed(
+        IReadOnlyList<string> requestedTokens,
+        string gameVersion = "1.7")
+    {
         var candidates = new List<(string RequestedToken, ModCandidateEntry Entry, int OriginalIndex)>();
-        var unresolved = new List<string>();
+        var unresolved = new List<UnresolvedModToken>();
 
         for (var i = 0; i < requestedTokens.Count; i++)
         {
@@ -236,7 +266,7 @@ public sealed class ModListResolver
             var matched = MatchToken(token);
             if (matched == null)
             {
-                unresolved.Add(token);
+                unresolved.Add(DiagnoseUnresolved(token));
                 continue;
             }
 
@@ -253,6 +283,7 @@ public sealed class ModListResolver
 
         var resolved = new List<ModDescriptor>();
         var seenPackageIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var ownerOfPackageId = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var item in candidates)
         {
@@ -271,14 +302,88 @@ public sealed class ModListResolver
                 item.Entry.BasePackageId,
                 item.Entry.SteamPackageId
             };
-            if (idsToRegister.Any(id => !seenPackageIds.Add(id)))
+            var collidedId = idsToRegister.FirstOrDefault(id => seenPackageIds.Contains(id));
+            if (collidedId != null)
+            {
+                // 同名双份（本地 + 工坊各一份）是真实会发生的，跳过可以，但必须留痕。
+                var owner = ownerOfPackageId.TryGetValue(collidedId, out var who) ? who : collidedId;
+                unresolved.Add(new UnresolvedModToken(
+                    item.RequestedToken,
+                    $"与已解析的「{owner}」packageId 相同，未重复纳入排序",
+                    "本地与工坊可能各装了一份同名模组，建议只保留其中一份",
+                    item.Entry.RootDirectory));
                 continue;
+            }
+
+            foreach (var id in idsToRegister)
+                seenPackageIds.Add(id);
 
             var descriptor = BuildDescriptor(item.Entry, effectivePackageId, item.OriginalIndex, gameVersion, activePackageIds);
             resolved.Add(descriptor);
+
+            if (!ownerOfPackageId.ContainsKey(item.Entry.BasePackageId))
+                ownerOfPackageId[item.Entry.BasePackageId] = descriptor.Name;
         }
 
         return (resolved, unresolved);
+    }
+
+    /// <summary>一条没能解析到物理目录的 token，附带可直接排查的原因与处置建议。</summary>
+    public sealed record UnresolvedModToken(
+        string Token,
+        string Reason,
+        string SuggestedFix,
+        string? MatchedRootDirectory = null);
+
+    private UnresolvedModToken DiagnoseUnresolved(string token)
+    {
+        var emptyCatalog = _catalog.Count == 0;
+        if (emptyCatalog)
+        {
+            return new UnresolvedModToken(
+                token,
+                "模组扫描根全部不存在，任何模组都读不到",
+                "检查游戏安装目录与工坊目录：Data / Mods / steamapps\\workshop\\content\\294100 是否都在扫描范围内");
+        }
+
+        if (token.IndexOfAny(new[] { '\\', '/' }) >= 0 || token.EndsWith(".xml", StringComparison.OrdinalIgnoreCase))
+        {
+            return new UnresolvedModToken(
+                token,
+                "给出的路径不是有效的模组目录（目录不存在或缺少 About.xml）",
+                "确认该文件夹还在原位置，且内部有 About\\About.xml");
+        }
+
+        var byName = _catalog.FirstOrDefault(c =>
+            c.Name.Equals(token, StringComparison.OrdinalIgnoreCase) ||
+            c.FolderName.Equals(token, StringComparison.OrdinalIgnoreCase));
+        if (byName != null)
+        {
+            return new UnresolvedModToken(
+                token,
+                $"磁盘上有同名模组「{byName.Name}」，但它 About.xml 里的 packageId 是 {byName.BasePackageId}",
+                "确认 ModsConfig 记录的 ID 与 About.xml 里的 packageId 一致（改过 About.xml 或换过来源会不一致）",
+                byName.RootDirectory);
+        }
+
+        var stripped = StripSteamSuffix(NormalizePackageId(token));
+        var similar = _catalog.FirstOrDefault(c =>
+            c.BasePackageId.Equals(stripped, StringComparison.OrdinalIgnoreCase) ||
+            c.BasePackageId.Contains(stripped, StringComparison.OrdinalIgnoreCase) ||
+            stripped.Contains(c.BasePackageId, StringComparison.OrdinalIgnoreCase));
+        if (similar != null)
+        {
+            return new UnresolvedModToken(
+                token,
+                $"疑似对应「{similar.Name}」（{similar.BasePackageId}），但标识不完全一致",
+                "ID 里可能有错字、多余空格或版本后缀差异，核对后修正列表来源",
+                similar.RootDirectory);
+        }
+
+        return new UnresolvedModToken(
+            token,
+            "磁盘上找不到对应目录（工坊未下载完成、压缩包解压层级不对，或装在未被扫描的位置）",
+            "确认模组已完整下载/解压，且位于 游戏目录\\Mods 或 工坊 294100 下");
     }
 
     public static string NormalizePackageId(string rawId)

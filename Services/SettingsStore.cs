@@ -72,7 +72,10 @@ public static class PathAutoDetector
             }
         }
 
-        // 注册表：Steam 主程序位置（HKCU 与 HKLM 都查）
+        // 注册表：Steam 主程序位置（HKCU 与 HKLM 都查）。
+        // CA1416：注册表 API 只存在于 Windows；非 Windows 平台会在下面被 try/catch 吞掉，
+        // 因此这里显式豁免平台分析告警，避免每次全量构建都刷 4 条噪音。
+#pragma warning disable CA1416
         foreach (var hive in new[] { Microsoft.Win32.Registry.CurrentUser, Microsoft.Win32.Registry.LocalMachine })
         {
             try
@@ -89,6 +92,7 @@ public static class PathAutoDetector
                 // 注册表不可读忽略
             }
         }
+#pragma warning restore CA1416
 
         // 常见盘符位置
         foreach (var drive in DriveReadyRoots())

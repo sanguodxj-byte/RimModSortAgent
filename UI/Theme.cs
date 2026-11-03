@@ -99,25 +99,7 @@ internal static class UiTheme
 
     public static string CategoryLabel(string raw)
     {
-        return raw switch
-        {
-            "DuplicateXmlDefOverwrite" => "XML Def 覆盖",
-            "HarmonyBlockingPrefixConflict" => "Prefix 截断冲突",
-            "ConditionalPrefixOrResultMutationOverlap" => "条件/返回值重叠",
-            "ConditionalOrMixedXmlPatchOverlap" => "XML Patch 重叠",
-            "DestructiveXmlPatchCollision" => "XML 破坏性替换",
-            "StructuralXmlPatchOverlap" => "XML 同级节点重叠",
-            "DynamicHarmonyTarget" => "动态目标方法",
-            "MultipleTranspilersSameTarget" => "多 Transpiler 叠加",
-            "CompatibleHarmonyOverlap" => "Harmony 兼容",
-            "AdditiveXmlPatchOverlap" => "XML 追加兼容",
-            "ExplicitIncompatibility" => "作者声明不兼容",
-            "MissingDependency" => "缺失前置依赖",
-            "CyclicLoadOrderConstraint" => "循环排序依赖",
-            "BrokenXmlDefReference" => "XML 引用对不上",
-            "XmlDefConfigError" => "Def 配置错误",
-            _ => raw
-        };
+        return Reporting.ConflictPlainText.CategoryLabel(raw);
     }
 
     public static string TierLabel(int tierRank)
